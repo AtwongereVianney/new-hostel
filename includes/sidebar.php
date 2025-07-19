@@ -6,13 +6,13 @@
     <hr>
     <ul class="nav nav-pills flex-column mb-auto">
         <li class="nav-item"><a href="../dashboard/index.php" class="nav-link active"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
-        <li><a href="../business.php" class="nav-link link-dark"><i class="bi bi-building"></i> Business</a></li>
+        <li><a href="business.php" class="nav-link link-dark"><i class="bi bi-building"></i> Business</a></li>
         <li><a href="../branches.php" class="nav-link link-dark"><i class="bi bi-diagram-3"></i> Branches</a></li>
         <li><a href="../roles.php" class="nav-link link-dark"><i class="bi bi-person-badge"></i> Roles</a></li>
         <li><a href="../permissions.php" class="nav-link link-dark"><i class="bi bi-shield-lock"></i> Permissions</a></li>
         <li><a href="../users.php" class="nav-link link-dark"><i class="bi bi-people"></i> Users</a></li>
         <li><a href="../hostels.php" class="nav-link link-dark"><i class="bi bi-house-door"></i> Hostels</a></li>
-        <li><a href="../rooms.php" class="nav-link link-dark"><i class="bi bi-door-open"></i> Rooms</a></li>
+        <li><a href="rooms.php" class="nav-link link-dark"><i class="bi bi-door-open"></i> Rooms</a></li>
         <li><a href="../bookings.php" class="nav-link link-dark"><i class="bi bi-calendar-check"></i> Bookings</a></li>
         <li><a href="../payments.php" class="nav-link link-dark"><i class="bi bi-credit-card"></i> Payments</a></li>
         <li><a href="../allocations.php" class="nav-link link-dark"><i class="bi bi-box-arrow-in-right"></i> Allocations</a></li>
@@ -44,4 +44,4 @@
         </ul>
     </div>
 </div>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css"> 
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
