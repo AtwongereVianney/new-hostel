@@ -80,39 +80,6 @@ if (isset($_POST['delete_branch'])) {
         exit;
     }
 }
-// Handle Add Hostel
-if (isset($_POST['add_hostel'])) {
-    $business_id = intval($_POST['business_id']);
-    $branch_id = intval($_POST['branch_id']);
-    $hostel_name = trim($_POST['hostel_name']);
-    $hostel_address = trim($_POST['hostel_address']);
-    $hostel_description = trim($_POST['hostel_description']);
-    $owner_id = 1; // You may want to set this dynamically
-    $image_path = null;
-    if (isset($_FILES['hostel_image']) && $_FILES['hostel_image']['error'] === UPLOAD_ERR_OK) {
-        $ext = pathinfo($_FILES['hostel_image']['name'], PATHINFO_EXTENSION);
-        $filename = uniqid('hostel_', true) . '.' . $ext;
-        $target = 'assets/images/hostels/' . $filename;
-        if (move_uploaded_file($_FILES['hostel_image']['tmp_name'], $target)) {
-            $image_path = $target;
-        }
-    }
-    if ($business_id && $branch_id && $hostel_name) {
-        $stmt = mysqli_prepare($conn, "INSERT INTO hostels (business_id, branch_id, owner_id, name, address, description) VALUES (?, ?, ?, ?, ?, ?)");
-        mysqli_stmt_bind_param($stmt, 'iiisss', $business_id, $branch_id, $owner_id, $hostel_name, $hostel_address, $hostel_description);
-        mysqli_stmt_execute($stmt);
-        $hostel_id = mysqli_insert_id($conn);
-        mysqli_stmt_close($stmt);
-        if ($image_path && $hostel_id) {
-            $stmt = mysqli_prepare($conn, "INSERT INTO hostel_images (hostel_id, image_path) VALUES (?, ?)");
-            mysqli_stmt_bind_param($stmt, 'is', $hostel_id, $image_path);
-            mysqli_stmt_execute($stmt);
-            mysqli_stmt_close($stmt);
-        }
-        header('Location: business.php');
-        exit;
-    }
-}
 // Fetch all businesses
 $query = "SELECT * FROM business WHERE deleted_at IS NULL";
 $result = mysqli_query($conn, $query);
@@ -122,31 +89,6 @@ $branch_query = "SELECT * FROM branch WHERE deleted_at IS NULL";
 $branch_result = mysqli_query($conn, $branch_query);
 while ($branch = mysqli_fetch_assoc($branch_result)) {
     $branches_by_business[$branch['business_id']][] = $branch;
-}
-// Fetch all hostels grouped by branch_id
-$hostels_by_branch = [];
-$hostel_query = "SELECT h.*, hi.image_path FROM hostels h LEFT JOIN hostel_images hi ON h.id = hi.hostel_id AND hi.deleted_at IS NULL WHERE h.deleted_at IS NULL";
-$hostel_result = mysqli_query($conn, $hostel_query);
-while ($hostel = mysqli_fetch_assoc($hostel_result)) {
-    $hostels_by_branch[$hostel['branch_id']][] = $hostel;
-}
-// Helper function to convert Google Maps link to embed URL
-function getGoogleMapsEmbedUrl($link) {
-    // If it's already an embed link, return as is
-    if (strpos($link, 'embed') !== false) return $link;
-    // Try to extract coordinates from a standard maps link
-    if (preg_match('/@(-?\d+\.\d+),(-?\d+\.\d+)/', $link, $matches)) {
-        $lat = $matches[1];
-        $lng = $matches[2];
-        return "https://www.google.com/maps?q={$lat},{$lng}&output=embed";
-    }
-    // If it's a place link, try to convert
-    if (preg_match('/\/place\/([^\/]+)/', $link, $matches)) {
-        $place = urlencode($matches[1]);
-        return "https://www.google.com/maps?q={$place}&output=embed";
-    }
-    // Fallback: just use the link as a search
-    return "https://www.google.com/maps?q=" . urlencode($link) . "&output=embed";
 }
 ?>
 <!DOCTYPE html>
@@ -250,22 +192,22 @@ function getGoogleMapsEmbedUrl($link) {
     </div>
     <!-- Main Content (scrolls independently from sidebar) -->
     <div class="business-content">
-        <div class="container py-4">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h2 class="mb-0"><i class="bi bi-building"></i> Businesses</h2>
-                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal"><i class="bi bi-plus-circle"></i> Add Business</button>
-            </div>
-            <div class="row g-4">
-                <?php while ($row = mysqli_fetch_assoc($result)): ?>
-                    <div class="col-12 col-md-6 col-lg-4">
-                        <div class="card business-card shadow-sm">
-                            <div class="card-body">
-                                <h5 class="card-title mb-2"><i class="bi bi-building me-2"></i><?= htmlspecialchars($row['name']) ?></h5>
-                                <p class="card-text mb-1"><small class="text-muted">Created: <?= htmlspecialchars($row['created_at']) ?></small></p>
-                                <p class="card-text mb-3"><small class="text-muted">Updated: <?= htmlspecialchars($row['updated_at']) ?></small></p>
-                                <div class="card-actions">
-                                    <button class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#editModal<?= $row['id'] ?>"><i class="bi bi-pencil"></i> Edit</button>
-                                    <button class="btn btn-sm btn-danger" data-bs-toggle="modal" data-bs-target="#deleteModal<?= $row['id'] ?>"><i class="bi bi-trash"></i> Delete</button>
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0"><i class="bi bi-building"></i> Businesses</h2>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal"><i class="bi bi-plus-circle"></i> Add Business</button>
+    </div>
+    <div class="row g-4">
+        <?php while ($row = mysqli_fetch_assoc($result)): ?>
+            <div class="col-12 col-md-6 col-lg-4">
+                <div class="card business-card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title mb-2"><i class="bi bi-building me-2"></i><?= htmlspecialchars($row['name']) ?></h5>
+                        <p class="card-text mb-1"><small class="text-muted">Created: <?= htmlspecialchars($row['created_at']) ?></small></p>
+                        <p class="card-text mb-3"><small class="text-muted">Updated: <?= htmlspecialchars($row['updated_at']) ?></small></p>
+                        <div class="card-actions">
+                            <button class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#editModal<?= $row['id'] ?>"><i class="bi bi-pencil"></i> Edit</button>
+                            <button class="btn btn-sm btn-danger" data-bs-toggle="modal" data-bs-target="#deleteModal<?= $row['id'] ?>"><i class="bi bi-trash"></i> Delete</button>
                                     <button class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#addBranchModal<?= $row['id'] ?>"><i class="bi bi-plus"></i> Add Branch</button>
                                 </div>
                                 <!-- Branches List -->
@@ -345,115 +287,55 @@ function getGoogleMapsEmbedUrl($link) {
                                                 </div>
                                               </div>
                                             </div>
-                                            <!-- Hostels List -->
-                                            <?php if (!empty($hostels_by_branch[$branch['id']])): ?>
-                                                <div class="mt-2 mb-2">
-                                                    <h6>Hostels:</h6>
-                                                    <div class="row g-2">
-                                                        <?php foreach ($hostels_by_branch[$branch['id']] as $hostel): ?>
-                                                            <div class="col-12">
-                                                                <div class="card mb-2 p-2 flex-row align-items-center" style="max-width: 350px;">
-                                                                    <?php if (!empty($hostel['image_path'])): ?>
-                                                                        <img src="<?= htmlspecialchars($hostel['image_path']) ?>" alt="Hostel Image" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; margin-right: 10px;">
-                                                                    <?php endif; ?>
-                                                                    <div>
-                                                                        <strong><?= htmlspecialchars($hostel['name']) ?></strong><br>
-                                                                        <small><?= htmlspecialchars($hostel['address']) ?></small><br>
-                                                                        <span class="text-muted small"><?= htmlspecialchars($hostel['description']) ?></span>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        <?php endforeach; ?>
-                                                    </div>
-                                                </div>
-                                            <?php endif; ?>
-                                            <button class="btn btn-sm btn-info mt-2" data-bs-toggle="modal" data-bs-target="#addHostelModal<?= $branch['id'] ?>"><i class="bi bi-plus-circle"></i> Add Hostel</button>
-                                            <!-- Add Hostel Modal -->
-                                            <div class="modal fade" id="addHostelModal<?= $branch['id'] ?>" tabindex="-1" aria-labelledby="addHostelModalLabel<?= $branch['id'] ?>" aria-hidden="true">
-                                              <div class="modal-dialog">
-                                                <div class="modal-content">
-                                                  <form method="post" action="" enctype="multipart/form-data">
-                                                    <div class="modal-header">
-                                                      <h5 class="modal-title" id="addHostelModalLabel<?= $branch['id'] ?>">Add Hostel to <?= htmlspecialchars($branch['name']) ?></h5>
-                                                      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                                    </div>
-                                                    <div class="modal-body">
-                                                      <input type="hidden" name="business_id" value="<?= $branch['business_id'] ?>">
-                                                      <input type="hidden" name="branch_id" value="<?= $branch['id'] ?>">
-                                                      <div class="mb-3">
-                                                        <label for="hostel_name<?= $branch['id'] ?>" class="form-label">Hostel Name</label>
-                                                        <input type="text" class="form-control" id="hostel_name<?= $branch['id'] ?>" name="hostel_name" required>
-                                                      </div>
-                                                      <div class="mb-3">
-                                                        <label for="hostel_address<?= $branch['id'] ?>" class="form-label">Address</label>
-                                                        <input type="text" class="form-control" id="hostel_address<?= $branch['id'] ?>" name="hostel_address">
-                                                      </div>
-                                                      <div class="mb-3">
-                                                        <label for="hostel_description<?= $branch['id'] ?>" class="form-label">Description</label>
-                                                        <textarea class="form-control" id="hostel_description<?= $branch['id'] ?>" name="hostel_description"></textarea>
-                                                      </div>
-                                                      <div class="mb-3">
-                                                        <label for="hostel_image<?= $branch['id'] ?>" class="form-label">Hostel Image</label>
-                                                        <input type="file" class="form-control" id="hostel_image<?= $branch['id'] ?>" name="hostel_image" accept="image/*">
-                                                      </div>
-                                                    </div>
-                                                    <div class="modal-footer">
-                                                      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                                                      <button type="submit" name="add_hostel" class="btn btn-info">Add Hostel</button>
-                                                    </div>
-                                                  </form>
-                                                </div>
-                                              </div>
-                                            </div>
                                         <?php endforeach; ?>
                                     </ul>
                                 <?php endif; ?>
                             </div>
-                        </div>
+                </div>
+            </div>
+            <!-- Edit Modal -->
+            <div class="modal fade" id="editModal<?= $row['id'] ?>" tabindex="-1" aria-labelledby="editModalLabel<?= $row['id'] ?>" aria-hidden="true">
+              <div class="modal-dialog">
+                <div class="modal-content">
+                  <form method="post" action="">
+                    <div class="modal-header">
+                      <h5 class="modal-title" id="editModalLabel<?= $row['id'] ?>">Edit Business</h5>
+                      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
-                    <!-- Edit Modal -->
-                    <div class="modal fade" id="editModal<?= $row['id'] ?>" tabindex="-1" aria-labelledby="editModalLabel<?= $row['id'] ?>" aria-hidden="true">
-                      <div class="modal-dialog">
-                        <div class="modal-content">
-                          <form method="post" action="">
-                            <div class="modal-header">
-                              <h5 class="modal-title" id="editModalLabel<?= $row['id'] ?>">Edit Business</h5>
-                              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                            </div>
-                            <div class="modal-body">
-                              <input type="hidden" name="id" value="<?= $row['id'] ?>">
-                              <div class="mb-3">
-                                <label for="name<?= $row['id'] ?>" class="form-label">Name</label>
-                                <input type="text" class="form-control" id="name<?= $row['id'] ?>" name="name" value="<?= htmlspecialchars($row['name']) ?>" required>
-                              </div>
-                            </div>
-                            <div class="modal-footer">
-                              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                              <button type="submit" name="edit" class="btn btn-primary">Save changes</button>
-                            </div>
-                          </form>
-                        </div>
+                    <div class="modal-body">
+                      <input type="hidden" name="id" value="<?= $row['id'] ?>">
+                      <div class="mb-3">
+                        <label for="name<?= $row['id'] ?>" class="form-label">Name</label>
+                        <input type="text" class="form-control" id="name<?= $row['id'] ?>" name="name" value="<?= htmlspecialchars($row['name']) ?>" required>
                       </div>
                     </div>
-                    <!-- Delete Modal -->
-                    <div class="modal fade" id="deleteModal<?= $row['id'] ?>" tabindex="-1" aria-labelledby="deleteModalLabel<?= $row['id'] ?>" aria-hidden="true">
-                      <div class="modal-dialog modal-dialog-centered">
-                        <div class="modal-content modal-confirm">
-                          <form method="post" action="">
-                            <div class="modal-body">
-                              <i class="bi bi-exclamation-triangle-fill"></i>
-                              <h5 class="modal-title mb-3" id="deleteModalLabel<?= $row['id'] ?>">Delete Business</h5>
-                              <input type="hidden" name="id" value="<?= $row['id'] ?>">
-                              <p>Are you sure you want to delete <strong><?= htmlspecialchars($row['name']) ?></strong>?</p>
-                            </div>
-                            <div class="modal-footer justify-content-center">
-                              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                              <button type="submit" name="delete" class="btn btn-danger">Delete</button>
-                            </div>
-                          </form>
-                        </div>
-                      </div>
+                    <div class="modal-footer">
+                      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                      <button type="submit" name="edit" class="btn btn-primary">Save changes</button>
                     </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+            <!-- Delete Modal -->
+            <div class="modal fade" id="deleteModal<?= $row['id'] ?>" tabindex="-1" aria-labelledby="deleteModalLabel<?= $row['id'] ?>" aria-hidden="true">
+              <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content modal-confirm">
+                  <form method="post" action="">
+                    <div class="modal-body">
+                      <i class="bi bi-exclamation-triangle-fill"></i>
+                      <h5 class="modal-title mb-3" id="deleteModalLabel<?= $row['id'] ?>">Delete Business</h5>
+                      <input type="hidden" name="id" value="<?= $row['id'] ?>">
+                      <p>Are you sure you want to delete <strong><?= htmlspecialchars($row['name']) ?></strong>?</p>
+                    </div>
+                    <div class="modal-footer justify-content-center">
+                      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                      <button type="submit" name="delete" class="btn btn-danger">Delete</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
                     <!-- Add Branch Modal -->
                     <div class="modal fade" id="addBranchModal<?= $row['id'] ?>" tabindex="-1" aria-labelledby="addBranchModalLabel<?= $row['id'] ?>" aria-hidden="true">
                       <div class="modal-dialog">
@@ -486,33 +368,33 @@ function getGoogleMapsEmbedUrl($link) {
                         </div>
                       </div>
                     </div>
-                <?php endwhile; ?>
+        <?php endwhile; ?>
+    </div>
+    <!-- Add Modal -->
+    <div class="modal fade" id="addModal" tabindex="-1" aria-labelledby="addModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <form method="post" action="">
+            <div class="modal-header">
+              <h5 class="modal-title" id="addModalLabel">Add Business</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <!-- Add Modal -->
-            <div class="modal fade" id="addModal" tabindex="-1" aria-labelledby="addModalLabel" aria-hidden="true">
-              <div class="modal-dialog">
-                <div class="modal-content">
-                  <form method="post" action="">
-                    <div class="modal-header">
-                      <h5 class="modal-title" id="addModalLabel">Add Business</h5>
-                      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                    </div>
-                    <div class="modal-body">
-                      <div class="mb-3">
-                        <label for="name" class="form-label">Name</label>
-                        <input type="text" class="form-control" id="name" name="name" required>
-                      </div>
-                    </div>
-                    <div class="modal-footer">
-                      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                      <button type="submit" name="add" class="btn btn-primary">Add</button>
-                    </div>
-                  </form>
-                </div>
+            <div class="modal-body">
+              <div class="mb-3">
+                <label for="name" class="form-label">Name</label>
+                <input type="text" class="form-control" id="name" name="name" required>
               </div>
             </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+              <button type="submit" name="add" class="btn btn-primary">Add</button>
+            </div>
+          </form>
+                </div>
         </div>
+      </div>
     </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

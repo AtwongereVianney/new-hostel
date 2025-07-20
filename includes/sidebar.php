@@ -159,13 +159,13 @@
                 </a>
             </li>
             <li class="nav-item">
-                <a href="../hostels.php" class="nav-link link-dark">
+                <a href="../dashboard/hostels.php" class="nav-link link-dark">
                     <i class="bi bi-house-door"></i>
                     <span>Hostels</span>
                 </a>
             </li>
             <li class="nav-item">
-                <a href="rooms.php" class="nav-link link-dark">
+                <a href="../dashboard/rooms.php" class="nav-link link-dark">
                     <i class="bi bi-door-open"></i>
                     <span>Rooms</span>
                 </a>
