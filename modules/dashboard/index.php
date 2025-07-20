@@ -38,6 +38,23 @@ session_start();
             overflow-y: auto;
             padding: 2rem 1rem;
         }
+        /* Responsive card styling similar to business cards */
+        .dashboard-card {
+            min-width: 250px;
+            max-width: 350px;
+            margin: 0 auto 1.5rem auto;
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        .dashboard-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .card-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: center;
+            margin-top: 1rem;
+        }
         @media (max-width: 991.98px) {
             .sidebar-fixed {
                 display: none;
@@ -45,6 +62,16 @@ session_start();
             .dashboard-content {
                 margin-left: 0;
                 padding-top: 4rem;
+                padding-left: 1rem;
+                padding-right: 1rem;
+            }
+        }
+        @media (max-width: 576px) {
+            .dashboard-content {
+                padding: 4rem 0.5rem 1rem 0.5rem;
+            }
+            .dashboard-card {
+                min-width: 200px;
             }
         }
     </style>
@@ -75,61 +102,73 @@ session_start();
     </div>
     <!-- Main Content (scrolls independently from sidebar) -->
     <div class="dashboard-content">
-        <h2 class="mb-4">Welcome to your Dashboard</h2>
-        <div class="row g-4">
-            <div class="col-md-4">
-                <div class="card text-bg-primary mb-3">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="bi bi-building"></i> Hostels</h5>
-                        <p class="card-text">Manage and view all hostels.</p>
-                        <a href="#" class="btn btn-light btn-sm">View Hostels</a>
+        <div class="container-fluid">
+            <h2 class="mb-4">Welcome to your Dashboard</h2>
+            <div class="row g-4">
+                <div class="col-12 col-md-6 col-lg-4">
+                    <div class="card text-bg-primary dashboard-card shadow-sm">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3"><i class="bi bi-building me-2"></i> Hostels</h5>
+                            <p class="card-text mb-3">Manage and view all hostels in your system.</p>
+                            <div class="card-actions">
+                                <a href="#" class="btn btn-light btn-sm"><i class="bi bi-eye me-1"></i> View Hostels</a>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card text-bg-success mb-3">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="bi bi-door-closed"></i> Rooms</h5>
-                        <p class="card-text">Check room status and availability.</p>
-                        <a href="#" class="btn btn-light btn-sm">View Rooms</a>
+                <div class="col-12 col-md-6 col-lg-4">
+                    <div class="card text-bg-success dashboard-card shadow-sm">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3"><i class="bi bi-door-closed me-2"></i> Rooms</h5>
+                            <p class="card-text mb-3">Check room status and availability.</p>
+                            <div class="card-actions">
+                                <a href="#" class="btn btn-light btn-sm"><i class="bi bi-eye me-1"></i> View Rooms</a>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card text-bg-warning mb-3">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="bi bi-calendar-check"></i> Bookings</h5>
-                        <p class="card-text">View and manage bookings.</p>
-                        <a href="#" class="btn btn-light btn-sm">View Bookings</a>
+                <div class="col-12 col-md-6 col-lg-4">
+                    <div class="card text-bg-warning dashboard-card shadow-sm">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3"><i class="bi bi-calendar-check me-2"></i> Bookings</h5>
+                            <p class="card-text mb-3">View and manage all bookings.</p>
+                            <div class="card-actions">
+                                <a href="#" class="btn btn-light btn-sm"><i class="bi bi-eye me-1"></i> View Bookings</a>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-        </div>
-        <div class="row g-4">
-            <div class="col-md-4">
-                <div class="card text-bg-info mb-3">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="bi bi-currency-dollar"></i> Payments</h5>
-                        <p class="card-text">Track and manage payments.</p>
-                        <a href="#" class="btn btn-light btn-sm">View Payments</a>
+                <div class="col-12 col-md-6 col-lg-4">
+                    <div class="card text-bg-info dashboard-card shadow-sm">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3"><i class="bi bi-currency-dollar me-2"></i> Payments</h5>
+                            <p class="card-text mb-3">Track and manage all payments.</p>
+                            <div class="card-actions">
+                                <a href="#" class="btn btn-light btn-sm"><i class="bi bi-eye me-1"></i> View Payments</a>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card text-bg-secondary mb-3">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="bi bi-people"></i> Users</h5>
-                        <p class="card-text">Manage user accounts and roles.</p>
-                        <a href="#" class="btn btn-light btn-sm">View Users</a>
+                <div class="col-12 col-md-6 col-lg-4">
+                    <div class="card text-bg-secondary dashboard-card shadow-sm">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3"><i class="bi bi-people me-2"></i> Users</h5>
+                            <p class="card-text mb-3">Manage user accounts and roles.</p>
+                            <div class="card-actions">
+                                <a href="#" class="btn btn-light btn-sm"><i class="bi bi-eye me-1"></i> View Users</a>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card text-bg-danger mb-3">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="bi bi-life-preserver"></i> Support</h5>
-                        <p class="card-text">Access support and help resources.</p>
-                        <a href="#" class="btn btn-light btn-sm">Get Support</a>
+                <div class="col-12 col-md-6 col-lg-4">
+                    <div class="card text-bg-danger dashboard-card shadow-sm">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3"><i class="bi bi-life-preserver me-2"></i> Support</h5>
+                            <p class="card-text mb-3">Access support and help resources.</p>
+                            <div class="card-actions">
+                                <a href="#" class="btn btn-light btn-sm"><i class="bi bi-eye me-1"></i> Get Support</a>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
