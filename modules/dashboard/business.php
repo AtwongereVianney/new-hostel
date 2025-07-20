@@ -80,6 +80,39 @@ if (isset($_POST['delete_branch'])) {
         exit;
     }
 }
+// Handle Add Hostel
+if (isset($_POST['add_hostel'])) {
+    $business_id = intval($_POST['business_id']);
+    $branch_id = intval($_POST['branch_id']);
+    $hostel_name = trim($_POST['hostel_name']);
+    $hostel_address = trim($_POST['hostel_address']);
+    $hostel_description = trim($_POST['hostel_description']);
+    $owner_id = 1; // You may want to set this dynamically
+    $image_path = null;
+    if (isset($_FILES['hostel_image']) && $_FILES['hostel_image']['error'] === UPLOAD_ERR_OK) {
+        $ext = pathinfo($_FILES['hostel_image']['name'], PATHINFO_EXTENSION);
+        $filename = uniqid('hostel_', true) . '.' . $ext;
+        $target = 'assets/images/hostels/' . $filename;
+        if (move_uploaded_file($_FILES['hostel_image']['tmp_name'], $target)) {
+            $image_path = $target;
+        }
+    }
+    if ($business_id && $branch_id && $hostel_name) {
+        $stmt = mysqli_prepare($conn, "INSERT INTO hostels (business_id, branch_id, owner_id, name, address, description) VALUES (?, ?, ?, ?, ?, ?)");
+        mysqli_stmt_bind_param($stmt, 'iiisss', $business_id, $branch_id, $owner_id, $hostel_name, $hostel_address, $hostel_description);
+        mysqli_stmt_execute($stmt);
+        $hostel_id = mysqli_insert_id($conn);
+        mysqli_stmt_close($stmt);
+        if ($image_path && $hostel_id) {
+            $stmt = mysqli_prepare($conn, "INSERT INTO hostel_images (hostel_id, image_path) VALUES (?, ?)");
+            mysqli_stmt_bind_param($stmt, 'is', $hostel_id, $image_path);
+            mysqli_stmt_execute($stmt);
+            mysqli_stmt_close($stmt);
+        }
+        header('Location: business.php');
+        exit;
+    }
+}
 // Fetch all businesses
 $query = "SELECT * FROM business WHERE deleted_at IS NULL";
 $result = mysqli_query($conn, $query);
@@ -89,6 +122,13 @@ $branch_query = "SELECT * FROM branch WHERE deleted_at IS NULL";
 $branch_result = mysqli_query($conn, $branch_query);
 while ($branch = mysqli_fetch_assoc($branch_result)) {
     $branches_by_business[$branch['business_id']][] = $branch;
+}
+// Fetch all hostels grouped by branch_id
+$hostels_by_branch = [];
+$hostel_query = "SELECT h.*, hi.image_path FROM hostels h LEFT JOIN hostel_images hi ON h.id = hi.hostel_id AND hi.deleted_at IS NULL WHERE h.deleted_at IS NULL";
+$hostel_result = mysqli_query($conn, $hostel_query);
+while ($hostel = mysqli_fetch_assoc($hostel_result)) {
+    $hostels_by_branch[$hostel['branch_id']][] = $hostel;
 }
 // Helper function to convert Google Maps link to embed URL
 function getGoogleMapsEmbedUrl($link) {
@@ -300,6 +340,66 @@ function getGoogleMapsEmbedUrl($link) {
                                                     <div class="modal-footer justify-content-center">
                                                       <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                                                       <button type="submit" name="delete_branch" class="btn btn-danger">Delete</button>
+                                                    </div>
+                                                  </form>
+                                                </div>
+                                              </div>
+                                            </div>
+                                            <!-- Hostels List -->
+                                            <?php if (!empty($hostels_by_branch[$branch['id']])): ?>
+                                                <div class="mt-2 mb-2">
+                                                    <h6>Hostels:</h6>
+                                                    <div class="row g-2">
+                                                        <?php foreach ($hostels_by_branch[$branch['id']] as $hostel): ?>
+                                                            <div class="col-12">
+                                                                <div class="card mb-2 p-2 flex-row align-items-center" style="max-width: 350px;">
+                                                                    <?php if (!empty($hostel['image_path'])): ?>
+                                                                        <img src="<?= htmlspecialchars($hostel['image_path']) ?>" alt="Hostel Image" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; margin-right: 10px;">
+                                                                    <?php endif; ?>
+                                                                    <div>
+                                                                        <strong><?= htmlspecialchars($hostel['name']) ?></strong><br>
+                                                                        <small><?= htmlspecialchars($hostel['address']) ?></small><br>
+                                                                        <span class="text-muted small"><?= htmlspecialchars($hostel['description']) ?></span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        <?php endforeach; ?>
+                                                    </div>
+                                                </div>
+                                            <?php endif; ?>
+                                            <button class="btn btn-sm btn-info mt-2" data-bs-toggle="modal" data-bs-target="#addHostelModal<?= $branch['id'] ?>"><i class="bi bi-plus-circle"></i> Add Hostel</button>
+                                            <!-- Add Hostel Modal -->
+                                            <div class="modal fade" id="addHostelModal<?= $branch['id'] ?>" tabindex="-1" aria-labelledby="addHostelModalLabel<?= $branch['id'] ?>" aria-hidden="true">
+                                              <div class="modal-dialog">
+                                                <div class="modal-content">
+                                                  <form method="post" action="" enctype="multipart/form-data">
+                                                    <div class="modal-header">
+                                                      <h5 class="modal-title" id="addHostelModalLabel<?= $branch['id'] ?>">Add Hostel to <?= htmlspecialchars($branch['name']) ?></h5>
+                                                      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                    </div>
+                                                    <div class="modal-body">
+                                                      <input type="hidden" name="business_id" value="<?= $branch['business_id'] ?>">
+                                                      <input type="hidden" name="branch_id" value="<?= $branch['id'] ?>">
+                                                      <div class="mb-3">
+                                                        <label for="hostel_name<?= $branch['id'] ?>" class="form-label">Hostel Name</label>
+                                                        <input type="text" class="form-control" id="hostel_name<?= $branch['id'] ?>" name="hostel_name" required>
+                                                      </div>
+                                                      <div class="mb-3">
+                                                        <label for="hostel_address<?= $branch['id'] ?>" class="form-label">Address</label>
+                                                        <input type="text" class="form-control" id="hostel_address<?= $branch['id'] ?>" name="hostel_address">
+                                                      </div>
+                                                      <div class="mb-3">
+                                                        <label for="hostel_description<?= $branch['id'] ?>" class="form-label">Description</label>
+                                                        <textarea class="form-control" id="hostel_description<?= $branch['id'] ?>" name="hostel_description"></textarea>
+                                                      </div>
+                                                      <div class="mb-3">
+                                                        <label for="hostel_image<?= $branch['id'] ?>" class="form-label">Hostel Image</label>
+                                                        <input type="file" class="form-control" id="hostel_image<?= $branch['id'] ?>" name="hostel_image" accept="image/*">
+                                                      </div>
+                                                    </div>
+                                                    <div class="modal-footer">
+                                                      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                                      <button type="submit" name="add_hostel" class="btn btn-info">Add Hostel</button>
                                                     </div>
                                                   </form>
                                                 </div>
