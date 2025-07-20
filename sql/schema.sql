@@ -13,6 +13,7 @@ CREATE TABLE branch (
     business_id INT NOT NULL,
     name VARCHAR(255) NOT NULL,
     location VARCHAR(255),
+    google_maps_link VARCHAR(512),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at DATETIME DEFAULT NULL,
