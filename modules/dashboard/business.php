@@ -18,9 +18,10 @@ if (isset($_POST['add_branch'])) {
     $business_id = intval($_POST['business_id']);
     $branch_name = trim($_POST['branch_name']);
     $branch_location = trim($_POST['branch_location']);
+    $google_maps_link = trim($_POST['google_maps_link']);
     if ($business_id && $branch_name) {
-        $stmt = mysqli_prepare($conn, "INSERT INTO branch (business_id, name, location) VALUES (?, ?, ?)");
-        mysqli_stmt_bind_param($stmt, 'iss', $business_id, $branch_name, $branch_location);
+        $stmt = mysqli_prepare($conn, "INSERT INTO branch (business_id, name, location, google_maps_link) VALUES (?, ?, ?, ?)");
+        mysqli_stmt_bind_param($stmt, 'isss', $business_id, $branch_name, $branch_location, $google_maps_link);
         mysqli_stmt_execute($stmt);
         mysqli_stmt_close($stmt);
         header('Location: business.php');
@@ -57,9 +58,10 @@ if (isset($_POST['edit_branch'])) {
     $branch_id = intval($_POST['branch_id']);
     $branch_name = trim($_POST['branch_name']);
     $branch_location = trim($_POST['branch_location']);
+    $google_maps_link = trim($_POST['google_maps_link']);
     if ($branch_id && $branch_name) {
-        $stmt = mysqli_prepare($conn, "UPDATE branch SET name = ?, location = ? WHERE id = ?");
-        mysqli_stmt_bind_param($stmt, 'ssi', $branch_name, $branch_location, $branch_id);
+        $stmt = mysqli_prepare($conn, "UPDATE branch SET name = ?, location = ?, google_maps_link = ? WHERE id = ?");
+        mysqli_stmt_bind_param($stmt, 'sssi', $branch_name, $branch_location, $google_maps_link, $branch_id);
         mysqli_stmt_execute($stmt);
         mysqli_stmt_close($stmt);
         header('Location: business.php');
@@ -87,6 +89,24 @@ $branch_query = "SELECT * FROM branch WHERE deleted_at IS NULL";
 $branch_result = mysqli_query($conn, $branch_query);
 while ($branch = mysqli_fetch_assoc($branch_result)) {
     $branches_by_business[$branch['business_id']][] = $branch;
+}
+// Helper function to convert Google Maps link to embed URL
+function getGoogleMapsEmbedUrl($link) {
+    // If it's already an embed link, return as is
+    if (strpos($link, 'embed') !== false) return $link;
+    // Try to extract coordinates from a standard maps link
+    if (preg_match('/@(-?\d+\.\d+),(-?\d+\.\d+)/', $link, $matches)) {
+        $lat = $matches[1];
+        $lng = $matches[2];
+        return "https://www.google.com/maps?q={$lat},{$lng}&output=embed";
+    }
+    // If it's a place link, try to convert
+    if (preg_match('/\/place\/([^\/]+)/', $link, $matches)) {
+        $place = urlencode($matches[1]);
+        return "https://www.google.com/maps?q={$place}&output=embed";
+    }
+    // Fallback: just use the link as a search
+    return "https://www.google.com/maps?q=" . urlencode($link) . "&output=embed";
 }
 ?>
 <!DOCTYPE html>
@@ -220,6 +240,14 @@ while ($branch = mysqli_fetch_assoc($branch_result)) {
                                                     <?php if ($branch['location']): ?>
                                                         <span class="text-muted">(<?= htmlspecialchars($branch['location']) ?>)</span>
                                                     <?php endif; ?>
+                                                    <?php if (!empty($branch['google_maps_link'])): ?>
+                                                        <a href="<?= htmlspecialchars($branch['google_maps_link'] ?? '') ?>" target="_blank" class="ms-2" title="View on Google Maps"><i class="bi bi-geo-alt-fill text-primary"></i></a>
+                                                        <div class="mt-2 mb-2" style="width:100%; max-width:350px; height:200px;">
+                                                            <iframe
+                                                                src="<?= htmlspecialchars(getGoogleMapsEmbedUrl($branch['google_maps_link'] ?? '')) ?>"
+                                                                width="100%" height="100%" style="border:0; border-radius:8px;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+                                                        </div>
+                                                    <?php endif; ?>
                                                 </div>
                                                 <div>
                                                     <button class="btn btn-sm btn-outline-warning me-1" data-bs-toggle="modal" data-bs-target="#editBranchModal<?= $branch['id'] ?>"><i class="bi bi-pencil"></i></button>
@@ -244,6 +272,10 @@ while ($branch = mysqli_fetch_assoc($branch_result)) {
                                                       <div class="mb-3">
                                                         <label for="branch_location_edit<?= $branch['id'] ?>" class="form-label">Location</label>
                                                         <input type="text" class="form-control" id="branch_location_edit<?= $branch['id'] ?>" name="branch_location" value="<?= htmlspecialchars($branch['location']) ?>">
+                                                      </div>
+                                                      <div class="mb-3">
+                                                        <label for="google_maps_link_edit<?= $branch['id'] ?>" class="form-label">Google Maps Link</label>
+                                                        <input type="url" class="form-control" id="google_maps_link_edit<?= $branch['id'] ?>" name="google_maps_link" value="<?= htmlspecialchars($branch['google_maps_link'] ?? '') ?>" placeholder="https://maps.google.com/...">
                                                       </div>
                                                     </div>
                                                     <div class="modal-footer">
@@ -340,6 +372,10 @@ while ($branch = mysqli_fetch_assoc($branch_result)) {
                               <div class="mb-3">
                                 <label for="branch_location<?= $row['id'] ?>" class="form-label">Location</label>
                                 <input type="text" class="form-control" id="branch_location<?= $row['id'] ?>" name="branch_location">
+                              </div>
+                              <div class="mb-3">
+                                <label for="google_maps_link<?= $row['id'] ?>" class="form-label">Google Maps Link</label>
+                                <input type="url" class="form-control" id="google_maps_link<?= $row['id'] ?>" name="google_maps_link" value="<?= htmlspecialchars($row['google_maps_link'] ?? '') ?>" placeholder="https://maps.google.com/...">
                               </div>
                             </div>
                             <div class="modal-footer">
