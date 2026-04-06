@@ -6,6 +6,9 @@ header('Access-Control-Allow-Headers: Content-Type, Authorization');
 
 require_once '../config/db.php';
 
+// IMPORTANT: Replace this with your LIVE Flutterwave Secret Key (FLWSECK-XXXX)
+define('FLW_SECRET_KEY', 'FLWSECK_TEST-sandbox-secret-key-placeholder');
+
 // Handle preflight OPTIONS request
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit(0);
@@ -35,6 +38,14 @@ switch ($request) {
     case 'bookings':
     case '/bookings':
         handleBookings($method, $conn);
+        break;
+    case 'pay':
+    case '/pay':
+        handlePayment($method, $conn);
+        break;
+    case 'verify-payment':
+    case '/verify-payment':
+        handlePaymentVerification($method, $conn);
         break;
     case '':
     case '/':
@@ -269,6 +280,102 @@ function handleBookings($method, $conn) {
             http_response_code(405);
             echo json_encode(['error' => 'Method not allowed']);
             break;
+    }
+}
+
+function handlePayment($method, $conn) {
+    if ($method !== 'POST') {
+        http_response_code(405);
+        echo json_encode(['error' => 'Method not allowed']);
+        return;
+    }
+
+    $data = json_decode(file_get_contents('php://input'), true);
+    
+    if (!$data || !isset($data['phone']) || !isset($data['amount']) || !isset($data['tx_ref'])) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Invalid payment data']);
+        return;
+    }
+
+    // Format phone for Uganda (Flutterwave prefers 256... over 07...)
+    $phone = preg_replace('/[^0-9]/', '', $data['phone']);
+    if (strpos($phone, '256') !== 0 && strpos($phone, '0') === 0) {
+        $phone = '256' . substr($phone, 1);
+    }
+
+    $payload = [
+        "tx_ref" => $data['tx_ref'],
+        "amount" => $data['amount'],
+        "currency" => "UGX",
+        "email" => $data['email'] ?? "student@mmu.ac.ug",
+        "phone_number" => $phone,
+        "fullname" => $data['fullname'] ?? "MMU Student",
+        "network" => $data['network'] ?? "MTN"
+    ];
+
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, "https://api.flutterwave.com/v3/charges?type=mobile_money_uganda");
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+        "Authorization: Bearer " . FLW_SECRET_KEY,
+        "Content-Type: application/json"
+    ));
+
+    $response = curl_exec($ch);
+    $err = curl_error($ch);
+    curl_close($ch);
+
+    if ($err) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'API Error: ' . $err]);
+    } else {
+        // Return exactly what Flutterwave responds with (e.g. {"status":"success", ...})
+        echo $response;
+    }
+}
+
+function handlePaymentVerification($method, $conn) {
+    if ($method !== 'GET') {
+        http_response_code(405);
+        echo json_encode(['error' => 'Method not allowed']);
+        return;
+    }
+
+    $tx_ref = $_GET['tx_ref'] ?? '';
+    if (!$tx_ref) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Missing tx_ref']);
+        return;
+    }
+
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, "https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=" . urlencode($tx_ref));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+        "Authorization: Bearer " . FLW_SECRET_KEY,
+        "Content-Type: application/json"
+    ));
+
+    $response = curl_exec($ch);
+    $err = curl_error($ch);
+    curl_close($ch);
+
+    if ($err) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'API Error']);
+    } else {
+        $resObj = json_decode($response, true);
+        if (isset($resObj['data']) && isset($resObj['data']['status'])) {
+            echo json_encode([
+                'status' => $resObj['data']['status'], // "successful", "failed", or "pending"
+                'transaction_id' => $resObj['data']['id'] ?? ''
+            ]);
+        } else {
+            echo json_encode(['status' => 'pending']);
+        }
     }
 }
 ?>
