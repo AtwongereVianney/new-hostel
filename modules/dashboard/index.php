@@ -57,11 +57,15 @@ auth_require_admin();
         }
         @media (max-width: 991.98px) {
             .sidebar-fixed {
-                display: none;
+                position: relative;
+                width: 100%;
+                height: auto;
+                border-right: 0;
+                border-bottom: 1px solid #dee2e6;
             }
             .dashboard-content {
                 margin-left: 0;
-                padding-top: 4rem;
+                padding-top: 1rem;
                 padding-left: 1rem;
                 padding-right: 1rem;
             }
@@ -78,32 +82,20 @@ auth_require_admin();
 </head>
 <body>
     <!-- Sidebar (fixed and scrollable on desktop) -->
-    <div class="sidebar-fixed d-none d-lg-block">
+    <div class="sidebar-fixed">
         <?php include '../../includes/sidebar.php'; ?>
-    </div>
-    <!-- Top Navbar for mobile -->
-    <nav class="navbar navbar-light bg-light d-lg-none fixed-top">
-        <div class="container-fluid">
-            <a class="navbar-brand fw-bold" href="#">Hostel System</a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="offcanvas" data-bs-target="#offcanvasSidebar" aria-controls="offcanvasSidebar">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-        </div>
-    </nav>
-    <!-- Offcanvas Sidebar for mobile -->
-    <div class="offcanvas offcanvas-start" tabindex="-1" id="offcanvasSidebar" aria-labelledby="offcanvasSidebarLabel">
-        <div class="offcanvas-header">
-            <h5 class="offcanvas-title" id="offcanvasSidebarLabel">Menu</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
-        </div>
-        <div class="offcanvas-body p-0">
-            <?php include '../../includes/sidebar.php'; ?>
-        </div>
     </div>
     <!-- Main Content (scrolls independently from sidebar) -->
     <div class="dashboard-content">
         <div class="container-fluid">
-            <h2 class="mb-4">Welcome to your Dashboard</h2>
+            <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-4 gap-3">
+                <h2 class="mb-0">Welcome to your Dashboard</h2>
+                <div class="d-flex gap-2 flex-wrap">
+                    <a href="manage_hostel_owners.php" class="btn btn-primary">
+                        <i class="bi bi-person-plus me-1"></i> Add Hostel Owner
+                    </a>
+                </div>
+            </div>
             <div class="row g-4">
                 <div class="col-12 col-md-6 col-lg-4">
                     <div class="card text-bg-primary dashboard-card shadow-sm">

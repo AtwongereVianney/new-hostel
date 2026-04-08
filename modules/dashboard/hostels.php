@@ -287,6 +287,9 @@ while ($owners_result && ($ou = mysqli_fetch_assoc($owners_result))) {
                 <h2 class="responsive-title mb-0"><i class="bi bi-house-door"></i> Hostels</h2>
                 <div class="d-flex gap-2 flex-wrap">
                     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addHostelModal"><i class="bi bi-plus-circle"></i> <span class="d-none d-sm-inline">Add Hostel</span></button>
+                    <a class="btn btn-outline-primary" href="./manage_hostel_owners.php">
+                        <i class="bi bi-person-lines-fill"></i> <span>Create Owner</span>
+                    </a>
                 </div>
             </div>
             <div class="row g-4">

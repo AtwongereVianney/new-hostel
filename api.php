@@ -4,7 +4,8 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
 
-require_once '../config/db.php';
+require_once __DIR__ . '/config/db.php';
+ensureHostelExtendedColumns($conn);
 
 // IMPORTANT: Replace this with your LIVE Flutterwave Secret Key (FLWSECK-XXXX)
 define('FLW_SECRET_KEY', 'FLWSECK_TEST-sandbox-secret-key-placeholder');
@@ -15,47 +16,565 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 $method = $_SERVER['REQUEST_METHOD'];
-$request = $_SERVER['REQUEST_URI'];
+$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$path = rtrim($path ?? '', '/');
 
-// Remove query string and decode
-$request = strtok($request, '?');
-
-// Handle different URL patterns
-if (strpos($request, '/new-hostel/api.php/') === 0) {
-    $request = str_replace('/new-hostel/api.php/', '', $request);
-} elseif (strpos($request, '/api.php/') === 0) {
-    $request = str_replace('/api.php/', '', $request);
-} elseif ($request === '/new-hostel/api.php' || $request === '/api.php') {
-    $request = '';
+// Robust endpoint detection: works even if the app lives under a parent path
+// like "/mmu-hostel%20solutions/new-hostel/api.php/hostels".
+$endpoint = '';
+$parts = explode('/', trim($path, '/'));
+$idx = array_search('api.php', $parts, true);
+if ($idx !== false) {
+    $endpoint = $parts[$idx + 1] ?? '';
 }
+$endpoint = ltrim(trim($endpoint), '/');
 
 // Route the request
-switch ($request) {
+switch ($endpoint) {
     case 'hostels':
-    case '/hostels':
         handleHostels($method, $conn);
         break;
     case 'bookings':
-    case '/bookings':
         handleBookings($method, $conn);
         break;
+    case 'users':
+        handleUsers($method, $conn);
+        break;
+    case 'login':
+        handleLogin($method, $conn);
+        break;
+    case 'roles':
+        handleRoles($method, $conn);
+        break;
+    case 'permissions':
+        handlePermissions($method, $conn);
+        break;
     case 'pay':
-    case '/pay':
         handlePayment($method, $conn);
         break;
     case 'verify-payment':
-    case '/verify-payment':
         handlePaymentVerification($method, $conn);
         break;
+    case 'booking-approval':
+        handleBookingApproval($method, $conn);
+        break;
     case '':
-    case '/':
-        // Root API endpoint
-        echo json_encode(['status' => 'API is running', 'endpoints' => ['hostels', 'bookings']]);
+        echo json_encode(['status' => 'API is running', 'endpoints' => ['hostels', 'bookings', 'users', 'roles', 'permissions', 'login', 'booking-approval', 'pay', 'verify-payment']]);
         break;
     default:
         http_response_code(404);
-        echo json_encode(['error' => 'Endpoint not found', 'request' => $request]);
+        echo json_encode(['error' => 'Endpoint not found', 'endpoint' => $endpoint, 'path' => $path]);
         break;
+}
+
+function handleLogin($method, $conn) {
+    if ($method !== 'POST') {
+        http_response_code(405);
+        echo json_encode(['error' => 'Method not allowed']);
+        return;
+    }
+
+    $data = json_decode(file_get_contents('php://input'), true);
+    $email = trim((string)($data['email'] ?? ''));
+    $password = (string)($data['password'] ?? '');
+    if ($email === '' || $password === '') {
+        http_response_code(400);
+        echo json_encode(['error' => 'Email and password are required']);
+        return;
+    }
+
+    $stmt = mysqli_prepare($conn, "
+        SELECT u.id, u.name, u.email, u.password, u.user_type, u.role_id, u.permissions_json, u.deleted_at,
+               r.name AS role_name
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        WHERE u.email = ?
+        LIMIT 1
+    ");
+    mysqli_stmt_bind_param($stmt, 's', $email);
+    mysqli_stmt_execute($stmt);
+    $result = mysqli_stmt_get_result($stmt);
+    $user = $result ? mysqli_fetch_assoc($result) : null;
+    mysqli_stmt_close($stmt);
+
+    if (!$user || !empty($user['deleted_at']) || !password_verify($password, (string)$user['password'])) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Invalid credentials']);
+        return;
+    }
+
+    $permissions = json_decode($user['permissions_json'] ?? '{}', true);
+    if (!is_array($permissions)) $permissions = [];
+
+    $assignedHostels = [];
+    if (($user['user_type'] ?? '') === 'hostel_owner') {
+        $ownerId = (int)$user['id'];
+        $hRes = mysqli_query($conn, "
+            SELECT id
+            FROM hostels
+            WHERE owner_id = {$ownerId} AND deleted_at IS NULL
+            ORDER BY id ASC
+        ");
+        while ($hRes && ($h = mysqli_fetch_assoc($hRes))) {
+            $assignedHostels[] = (int)$h['id'];
+        }
+    }
+
+    echo json_encode([
+        'success' => true,
+        'user' => [
+            'id' => (int)$user['id'],
+            'name' => $user['name'] ?? '',
+            'email' => $user['email'] ?? '',
+            'user_type' => $user['user_type'] ?? 'student',
+            'role_id' => isset($user['role_id']) ? (int)$user['role_id'] : null,
+            'role_name' => $user['role_name'] ?? '',
+            'permissions' => $permissions,
+            'assigned_hostel_ids' => $assignedHostels,
+        ]
+    ]);
+}
+
+function handleBookingApproval($method, $conn) {
+    if ($method !== 'POST') {
+        http_response_code(405);
+        echo json_encode(['error' => 'Method not allowed']);
+        return;
+    }
+
+    $data = json_decode(file_get_contents('php://input'), true);
+    $email = trim((string)($data['email'] ?? ''));
+    $studentName = trim((string)($data['studentName'] ?? 'Student'));
+    $regNo = trim((string)($data['regNo'] ?? ''));
+    $hostelName = trim((string)($data['hostelName'] ?? ''));
+    $roomNumber = trim((string)($data['roomNumber'] ?? ''));
+
+    if ($email === '') {
+        http_response_code(400);
+        echo json_encode(['error' => 'Student email is required']);
+        return;
+    }
+
+    $plainPassword = 'MMU' . rand(1000, 9999) . '!';
+    $hash = password_hash($plainPassword, PASSWORD_DEFAULT);
+    $userId = 0;
+
+    $check = mysqli_prepare($conn, "SELECT id FROM users WHERE email = ? LIMIT 1");
+    mysqli_stmt_bind_param($check, 's', $email);
+    mysqli_stmt_execute($check);
+    $res = mysqli_stmt_get_result($check);
+    $existing = $res ? mysqli_fetch_assoc($res) : null;
+    mysqli_stmt_close($check);
+
+    if ($existing) {
+        $userId = (int)$existing['id'];
+        $up = mysqli_prepare($conn, "UPDATE users SET name = ?, user_type = 'student', password = ?, deleted_at = NULL WHERE id = ?");
+        mysqli_stmt_bind_param($up, 'ssi', $studentName, $hash, $userId);
+        mysqli_stmt_execute($up);
+        mysqli_stmt_close($up);
+    } else {
+        $businessId = 1;
+        $branchId = 1;
+        $phone = '';
+        $roleId = null;
+        $permissionsJson = json_encode([]);
+        $ins = mysqli_prepare($conn, "
+            INSERT INTO users (business_id, branch_id, name, email, password, phone, role_id, user_type, permissions_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'student', ?)
+        ");
+        mysqli_stmt_bind_param($ins, 'iissssis', $businessId, $branchId, $studentName, $email, $hash, $phone, $roleId, $permissionsJson);
+        mysqli_stmt_execute($ins);
+        $userId = (int)mysqli_insert_id($conn);
+        mysqli_stmt_close($ins);
+    }
+
+    $subject = 'MMU Hostel Booking Approved - Login Credentials';
+    $message = "Hello {$studentName},\n\n" .
+        "Your hostel booking has been approved.\n" .
+        "Hostel: {$hostelName}\nRoom: {$roomNumber}\nReg No: {$regNo}\n\n" .
+        "Use the same Admin Login form to access your student dashboard.\n" .
+        "Email: {$email}\nPassword: {$plainPassword}\n\n" .
+        "Please change this password after first login.\n\n" .
+        "MMU Hostel System";
+    $headers = "From: no-reply@mmu.local\r\n";
+    $mailSent = @mail($email, $subject, $message, $headers);
+
+    echo json_encode([
+        'success' => true,
+        'user_id' => $userId,
+        'email_sent' => (bool)$mailSent,
+        'email' => $email,
+    ]);
+}
+
+function ensureHostelExtendedColumns($conn) {
+    $needed = [
+        "gender VARCHAR(20) NULL",
+        "distance VARCHAR(120) NULL",
+        "manager_phone VARCHAR(25) NULL",
+        "rating DECIMAL(3,1) NULL",
+        "amenities_json TEXT NULL",
+        "location_lat VARCHAR(30) NULL",
+        "location_lng VARCHAR(30) NULL"
+    ];
+    foreach ($needed as $colDef) {
+        $col = explode(' ', $colDef)[0];
+        $res = mysqli_query($conn, "SHOW COLUMNS FROM hostels LIKE '{$col}'");
+        if (!$res || mysqli_num_rows($res) === 0) {
+            mysqli_query($conn, "ALTER TABLE hostels ADD COLUMN {$colDef}");
+        }
+    }
+}
+
+function handleRoles($method, $conn) {
+    switch ($method) {
+        case 'GET':
+            $rows = [];
+            $res = mysqli_query($conn, "
+                SELECT id, name, business_id, branch_id
+                FROM roles
+                WHERE deleted_at IS NULL
+                ORDER BY name ASC
+            ");
+            while ($res && ($r = mysqli_fetch_assoc($res))) {
+                $rows[] = [
+                    'id' => (int)$r['id'],
+                    'name' => $r['name'] ?? '',
+                    'business_id' => (int)($r['business_id'] ?? 0),
+                    'branch_id' => (int)($r['branch_id'] ?? 0),
+                ];
+            }
+            echo json_encode($rows);
+            break;
+        case 'POST':
+            $data = json_decode(file_get_contents('php://input'), true);
+            $name = trim((string)($data['name'] ?? ''));
+            $businessId = (int)($data['business_id'] ?? 1);
+            $branchId = (int)($data['branch_id'] ?? 1);
+            if ($name === '') {
+                http_response_code(400);
+                echo json_encode(['error' => 'Role name is required']);
+                return;
+            }
+            $stmt = mysqli_prepare($conn, "INSERT INTO roles (business_id, branch_id, name) VALUES (?, ?, ?)");
+            mysqli_stmt_bind_param($stmt, 'iis', $businessId, $branchId, $name);
+            if (mysqli_stmt_execute($stmt)) {
+                echo json_encode(['success' => true, 'id' => (int)mysqli_insert_id($conn)]);
+            } else {
+                http_response_code(500);
+                echo json_encode(['error' => 'Could not create role']);
+            }
+            mysqli_stmt_close($stmt);
+            break;
+        default:
+            http_response_code(405);
+            echo json_encode(['error' => 'Method not allowed']);
+            break;
+    }
+}
+
+function handlePermissions($method, $conn) {
+    switch ($method) {
+        case 'GET':
+            $rows = [];
+            $res = mysqli_query($conn, "
+                SELECT id, name, business_id, branch_id
+                FROM permissions
+                WHERE deleted_at IS NULL
+                ORDER BY name ASC
+            ");
+            while ($res && ($r = mysqli_fetch_assoc($res))) {
+                $rows[] = [
+                    'id' => (int)$r['id'],
+                    'name' => $r['name'] ?? '',
+                    'business_id' => (int)($r['business_id'] ?? 0),
+                    'branch_id' => (int)($r['branch_id'] ?? 0),
+                ];
+            }
+            echo json_encode($rows);
+            break;
+        case 'POST':
+            $data = json_decode(file_get_contents('php://input'), true);
+            $businessId = (int)($data['business_id'] ?? 1);
+            $branchId = (int)($data['branch_id'] ?? 1);
+
+            // Bulk seed mode: { seed_defaults: true }
+            if (!empty($data['seed_defaults'])) {
+                $defaultPermissions = [
+                    // Dashboard & analytics
+                    'view_dashboard', 'view_reports', 'export_reports',
+                    // Hostel management
+                    'view_hostels', 'create_hostel', 'edit_hostel', 'delete_hostel',
+                    'assign_hostel_owner', 'view_hostel_details',
+                    // Room management
+                    'view_rooms', 'create_room', 'edit_room', 'delete_room', 'manage_rooms',
+                    'update_room_status', 'release_room', 'confirm_room_payment',
+                    // Booking management
+                    'view_bookings', 'create_booking', 'edit_booking', 'cancel_booking', 'manage_bookings',
+                    'confirm_booking', 'verify_booking_payment',
+                    // User & manager management
+                    'view_users', 'create_user', 'edit_user', 'delete_user',
+                    'activate_user', 'suspend_user', 'manage_users',
+                    'view_managers', 'create_manager', 'edit_manager', 'delete_manager', 'manage_managers',
+                    // Role & permission administration
+                    'view_roles', 'create_role', 'edit_role', 'delete_role', 'assign_role',
+                    'view_permissions', 'create_permission', 'edit_permission', 'delete_permission', 'assign_permission',
+                    // Payments
+                    'view_payments', 'initiate_payment', 'verify_payment', 'refund_payment', 'manage_payments',
+                    // Audit & security
+                    'view_audit_logs', 'manage_security_settings',
+                    // System setup
+                    'manage_business_settings', 'manage_branch_settings', 'system_admin',
+                ];
+
+                $added = 0;
+                foreach ($defaultPermissions as $permName) {
+                    $nameEsc = mysqli_real_escape_string($conn, $permName);
+                    $check = mysqli_query($conn, "
+                        SELECT id FROM permissions
+                        WHERE business_id = {$businessId}
+                          AND branch_id = {$branchId}
+                          AND name = '{$nameEsc}'
+                          AND deleted_at IS NULL
+                        LIMIT 1
+                    ");
+                    if ($check && mysqli_num_rows($check) > 0) {
+                        continue;
+                    }
+                    $stmt = mysqli_prepare($conn, "INSERT INTO permissions (business_id, branch_id, name) VALUES (?, ?, ?)");
+                    mysqli_stmt_bind_param($stmt, 'iis', $businessId, $branchId, $permName);
+                    if (mysqli_stmt_execute($stmt)) {
+                        $added++;
+                    }
+                    mysqli_stmt_close($stmt);
+                }
+                echo json_encode([
+                    'success' => true,
+                    'seeded' => count($defaultPermissions),
+                    'added' => $added,
+                    'skipped_existing' => count($defaultPermissions) - $added,
+                ]);
+                return;
+            }
+
+            $name = trim((string)($data['name'] ?? ''));
+            if ($name === '') {
+                http_response_code(400);
+                echo json_encode(['error' => 'Permission name is required']);
+                return;
+            }
+            $stmt = mysqli_prepare($conn, "INSERT INTO permissions (business_id, branch_id, name) VALUES (?, ?, ?)");
+            mysqli_stmt_bind_param($stmt, 'iis', $businessId, $branchId, $name);
+            if (mysqli_stmt_execute($stmt)) {
+                echo json_encode(['success' => true, 'id' => (int)mysqli_insert_id($conn)]);
+            } else {
+                http_response_code(500);
+                echo json_encode(['error' => 'Could not create permission']);
+            }
+            mysqli_stmt_close($stmt);
+            break;
+        default:
+            http_response_code(405);
+            echo json_encode(['error' => 'Method not allowed']);
+            break;
+    }
+}
+
+function handleUsers($method, $conn) {
+    switch ($method) {
+        case 'GET':
+            $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+            if ($id > 0) {
+                $stmt = mysqli_prepare($conn, "
+                    SELECT u.id, u.name, u.email, u.phone, u.user_type, u.role_id, u.permissions_json, u.deleted_at, u.created_at,
+                           r.name AS role_name
+                    FROM users u
+                    LEFT JOIN roles r ON u.role_id = r.id
+                    WHERE u.id = ?
+                    LIMIT 1
+                ");
+                mysqli_stmt_bind_param($stmt, 'i', $id);
+                mysqli_stmt_execute($stmt);
+                $res = mysqli_stmt_get_result($stmt);
+                $row = $res ? mysqli_fetch_assoc($res) : null;
+                mysqli_stmt_close($stmt);
+                if (!$row) {
+                    http_response_code(404);
+                    echo json_encode(['error' => 'User not found']);
+                    return;
+                }
+
+                $assignedHostels = [];
+                if (($row['user_type'] ?? '') === 'hostel_owner') {
+                    $ownerId = (int)$row['id'];
+                    $hRes = mysqli_query($conn, "
+                        SELECT id
+                        FROM hostels
+                        WHERE owner_id = {$ownerId} AND deleted_at IS NULL
+                        ORDER BY id ASC
+                    ");
+                    while ($hRes && ($h = mysqli_fetch_assoc($hRes))) {
+                        $assignedHostels[] = (int)$h['id'];
+                    }
+                }
+
+                echo json_encode([
+                    'id' => (int)$row['id'],
+                    'name' => $row['name'] ?? '',
+                    'email' => $row['email'] ?? '',
+                    'phone' => $row['phone'] ?? '',
+                    'role' => $row['user_type'] ?? 'hostel_owner',
+                    'role_id' => isset($row['role_id']) ? (int)$row['role_id'] : null,
+                    'role_name' => $row['role_name'] ?? '',
+                    'status' => empty($row['deleted_at']) ? 'active' : 'suspended',
+                    'permissions' => json_decode($row['permissions_json'] ?? '{}', true) ?: [],
+                    'assigned_hostel_ids' => $assignedHostels,
+                    'created_at' => $row['created_at'] ?? null,
+                ]);
+                return;
+            }
+
+            $role = $_GET['role'] ?? 'hostel_owner';
+            $roleEsc = mysqli_real_escape_string($conn, $role);
+            $whereRole = ($roleEsc === 'all') ? '1=1' : "u.user_type = '{$roleEsc}'";
+            $result = mysqli_query($conn, "
+                SELECT u.id, u.name, u.email, u.phone, u.user_type, u.role_id, u.permissions_json, u.deleted_at, u.created_at,
+                       r.name AS role_name
+                FROM users u
+                LEFT JOIN roles r ON u.role_id = r.id
+                WHERE {$whereRole}
+                ORDER BY u.created_at DESC
+            ");
+
+            $users = [];
+            while ($row = mysqli_fetch_assoc($result)) {
+                $users[] = [
+                    'id' => (int)$row['id'],
+                    'name' => $row['name'] ?? '',
+                    'email' => $row['email'] ?? '',
+                    'phone' => $row['phone'] ?? '',
+                    'role' => $row['user_type'] ?? 'hostel_owner',
+                    'role_id' => isset($row['role_id']) ? (int)$row['role_id'] : null,
+                    'role_name' => $row['role_name'] ?? '',
+                    'status' => empty($row['deleted_at']) ? 'active' : 'suspended',
+                    'permissions' => json_decode($row['permissions_json'] ?? '{}', true) ?: [],
+                    'created_at' => $row['created_at'] ?? null,
+                ];
+            }
+            echo json_encode($users);
+            break;
+
+        case 'POST':
+            $data = json_decode(file_get_contents('php://input'), true);
+            if (!$data) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid data']);
+                return;
+            }
+
+            $name = trim((string)($data['name'] ?? ''));
+            $email = trim((string)($data['email'] ?? ''));
+            $phone = trim((string)($data['phone'] ?? ''));
+            $password = (string)($data['password'] ?? '');
+            $role = trim((string)($data['role'] ?? 'hostel_owner'));
+            $roleId = isset($data['role_id']) && (int)$data['role_id'] > 0 ? (int)$data['role_id'] : null;
+            $businessId = (int)($data['business_id'] ?? 1);
+            $branchId = (int)($data['branch_id'] ?? 1);
+            $permissions = $data['permissions'] ?? [
+                'view_hostels' => true,
+                'edit_hostel' => true,
+                'manage_rooms' => true,
+                'view_bookings' => true,
+                'manage_bookings' => false,
+            ];
+
+            if ($name === '' || $email === '' || strlen($password) < 6) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Name, email and password (min 6 chars) are required']);
+                return;
+            }
+
+            $check = mysqli_prepare($conn, "SELECT id FROM users WHERE email = ? LIMIT 1");
+            mysqli_stmt_bind_param($check, 's', $email);
+            mysqli_stmt_execute($check);
+            mysqli_stmt_store_result($check);
+            $exists = mysqli_stmt_num_rows($check) > 0;
+            mysqli_stmt_close($check);
+            if ($exists) {
+                http_response_code(409);
+                echo json_encode(['error' => 'Email already exists']);
+                return;
+            }
+
+            $hash = password_hash($password, PASSWORD_DEFAULT);
+            $permJson = json_encode($permissions);
+            $stmt = mysqli_prepare($conn, "
+                INSERT INTO users (business_id, branch_id, name, email, password, phone, role_id, user_type, permissions_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            mysqli_stmt_bind_param($stmt, 'iissssiss', $businessId, $branchId, $name, $email, $hash, $phone, $roleId, $role, $permJson);
+            if (mysqli_stmt_execute($stmt)) {
+                $id = mysqli_insert_id($conn);
+                echo json_encode(['success' => true, 'id' => (int)$id]);
+            } else {
+                http_response_code(500);
+                echo json_encode(['error' => 'Could not create user']);
+            }
+            mysqli_stmt_close($stmt);
+            break;
+
+        case 'PUT':
+            $data = json_decode(file_get_contents('php://input'), true);
+            $id = (int)($data['id'] ?? 0);
+            if ($id <= 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid id']);
+                return;
+            }
+            $status = trim((string)($data['status'] ?? ''));
+            $hasStatus = in_array($status, ['active', 'suspended'], true);
+            $hasAccessUpdate = array_key_exists('role_id', $data) || array_key_exists('permissions', $data) || array_key_exists('user_type', $data);
+
+            if (!$hasStatus && !$hasAccessUpdate) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Nothing to update']);
+                return;
+            }
+
+            if ($hasStatus) {
+                if ($status === 'active') {
+                    $stmt = mysqli_prepare($conn, "UPDATE users SET deleted_at = NULL WHERE id = ?");
+                } else {
+                    $stmt = mysqli_prepare($conn, "UPDATE users SET deleted_at = NOW() WHERE id = ?");
+                }
+                mysqli_stmt_bind_param($stmt, 'i', $id);
+                mysqli_stmt_execute($stmt);
+                mysqli_stmt_close($stmt);
+            }
+
+            if ($hasAccessUpdate) {
+                $roleId = null;
+                if (array_key_exists('role_id', $data) && (int)$data['role_id'] > 0) {
+                    $roleId = (int)$data['role_id'];
+                }
+                $userType = trim((string)($data['user_type'] ?? ''));
+                if ($userType === '') $userType = 'student';
+                $permissions = $data['permissions'] ?? [];
+                $permJson = json_encode($permissions);
+
+                $stmt = mysqli_prepare($conn, "UPDATE users SET role_id = ?, user_type = ?, permissions_json = ? WHERE id = ?");
+                mysqli_stmt_bind_param($stmt, 'issi', $roleId, $userType, $permJson, $id);
+                mysqli_stmt_execute($stmt);
+                mysqli_stmt_close($stmt);
+            }
+            echo json_encode(['success' => true]);
+            break;
+
+        default:
+            http_response_code(405);
+            echo json_encode(['error' => 'Method not allowed']);
+            break;
+    }
 }
 
 function handleHostels($method, $conn) {
@@ -63,9 +582,10 @@ function handleHostels($method, $conn) {
         case 'GET':
             // Get all hostels
             $result = mysqli_query($conn, "
-                SELECT h.*, hi.image_path
+                SELECT h.*, hi.image_path, u.phone AS owner_phone
                 FROM hostels h
                 LEFT JOIN hostel_images hi ON h.id = hi.hostel_id
+                LEFT JOIN users u ON h.owner_id = u.id
                 WHERE h.deleted_at IS NULL
                 ORDER BY h.id DESC
             ");
@@ -84,7 +604,18 @@ function handleHostels($method, $conn) {
                         'business_id' => (int)$row['business_id'],
                         'branch_id' => (int)$row['branch_id'],
                         'owner_id' => (int)$row['owner_id'],
-                        'images' => []
+                        'managerPhone' => ($row['manager_phone'] ?? '') !== '' ? $row['manager_phone'] : ($row['owner_phone'] ?? null),
+                        'gender' => $row['gender'] ?? null,
+                        'distance' => $row['distance'] ?? null,
+                        'rating' => isset($row['rating']) ? (float)$row['rating'] : null,
+                        'amenities' => json_decode($row['amenities_json'] ?? '[]', true) ?: [],
+                        'location' => [
+                            'address' => $row['address'] ?? '',
+                            'lat' => $row['location_lat'] ?? '',
+                            'lng' => $row['location_lng'] ?? '',
+                        ],
+                        'images' => [],
+                        'rooms'  => []
                     ];
                 }
 
@@ -93,6 +624,40 @@ function handleHostels($method, $conn) {
                     $hostels[$hostelId]['images'][] = $row['image_path'];
                 }
             }
+
+            // Attach rooms from the database to each hostel
+            foreach ($hostels as $hostelId => &$h) {
+                $roomResult = mysqli_query($conn, "
+                    SELECT id, room_number, type, price, status
+                    FROM rooms
+                    WHERE hostel_id = " . (int)$hostelId . " AND deleted_at IS NULL
+                    ORDER BY id ASC
+                ");
+
+                while ($roomRow = mysqli_fetch_assoc($roomResult)) {
+                    $dbStatus = strtolower(trim((string)($roomRow['status'] ?? '')));
+                    $frontStatus = $dbStatus;
+                    if ($dbStatus === 'vacant') {
+                        $frontStatus = 'available';
+                    } elseif ($dbStatus === 'occupied') {
+                        $frontStatus = 'booked';
+                    }
+
+                    $h['rooms'][] = [
+                        'id' => (int)$roomRow['id'],
+                        'number' => $roomRow['room_number'],
+                        'type' => $roomRow['type'] ?? '',
+                        'price' => (float)$roomRow['price'],
+                        'status' => $frontStatus,
+                        // Frontend expects these optional fields; DB schema doesn't store them.
+                        'confirmationFee' => 50000,
+                        'floor' => null,
+                        'bookedBy' => null,
+                        'regNo' => null,
+                    ];
+                }
+            }
+            unset($h); // break reference
 
             echo json_encode(array_values($hostels));
             break;
@@ -107,22 +672,53 @@ function handleHostels($method, $conn) {
                 return;
             }
 
-            $stmt = mysqli_prepare($conn, "
-                INSERT INTO hostels (business_id, branch_id, owner_id, name, address, description)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ");
-
             $businessId = $data['business_id'] ?? 1;
             $branchId = $data['branch_id'] ?? 1;
             $ownerId = $data['owner_id'] ?? 1;
+            $hostelId = isset($data['id']) ? (int)$data['id'] : null;
+            $address = $data['address'] ?? (($data['location']['address'] ?? null) ?: '');
+            $description = $data['description'] ?? '';
+            $gender = $data['gender'] ?? null;
+            $distance = $data['distance'] ?? null;
+            $managerPhone = $data['managerPhone'] ?? null;
+            $rating = isset($data['rating']) && $data['rating'] !== '' ? (float)$data['rating'] : null;
+            $amenitiesJson = json_encode($data['amenities'] ?? []);
+            $lat = $data['location']['lat'] ?? null;
+            $lng = $data['location']['lng'] ?? null;
 
-            mysqli_stmt_bind_param($stmt, 'iiisss',
-                $businessId, $branchId, $ownerId,
-                $data['name'], $data['address'] ?? '', $data['description'] ?? ''
-            );
+            if ($hostelId !== null && $hostelId > 0) {
+                $stmt = mysqli_prepare($conn, "
+                    INSERT INTO hostels (id, business_id, branch_id, owner_id, name, address, description, gender, distance, manager_phone, rating, amenities_json, location_lat, location_lng)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                        business_id = VALUES(business_id),
+                        branch_id = VALUES(branch_id),
+                        owner_id = VALUES(owner_id),
+                        name = VALUES(name),
+                        address = VALUES(address),
+                        description = VALUES(description),
+                        gender = VALUES(gender),
+                        distance = VALUES(distance),
+                        manager_phone = VALUES(manager_phone),
+                        rating = VALUES(rating),
+                        amenities_json = VALUES(amenities_json),
+                        location_lat = VALUES(location_lat),
+                        location_lng = VALUES(location_lng)
+                ");
+                mysqli_stmt_bind_param($stmt, 'iiiissssssdsss', $hostelId, $businessId, $branchId, $ownerId, $data['name'], $address, $description, $gender, $distance, $managerPhone, $rating, $amenitiesJson, $lat, $lng);
+            } else {
+                $stmt = mysqli_prepare($conn, "
+                    INSERT INTO hostels (business_id, branch_id, owner_id, name, address, description, gender, distance, manager_phone, rating, amenities_json, location_lat, location_lng)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ");
+                mysqli_stmt_bind_param($stmt, 'iiissssssdsss',
+                    $businessId, $branchId, $ownerId, $data['name'], $address, $description,
+                    $gender, $distance, $managerPhone, $rating, $amenitiesJson, $lat, $lng
+                );
+            }
 
             if (mysqli_stmt_execute($stmt)) {
-                $hostelId = mysqli_insert_id($conn);
+                $hostelId = ($hostelId !== null && $hostelId > 0) ? $hostelId : mysqli_insert_id($conn);
 
                 // Handle images if provided
                 if (isset($data['images']) && is_array($data['images'])) {
@@ -134,12 +730,82 @@ function handleHostels($method, $conn) {
                     }
                 }
 
+                // Upsert rooms if provided by the frontend
+                if (isset($data['rooms']) && is_array($data['rooms'])) {
+                    foreach ($data['rooms'] as $room) {
+                        if (!is_array($room)) continue;
+
+                        $roomId = isset($room['id']) ? (int)$room['id'] : null;
+                        $roomNumber = $room['number'] ?? ($room['room_number'] ?? null);
+                        if (!$roomNumber) continue;
+
+                        $type = $room['type'] ?? '';
+                        $price = $room['price'] ?? 0;
+
+                        $frontStatus = strtolower(trim((string)($room['status'] ?? 'available')));
+                        $dbStatus = $frontStatus;
+                        if ($frontStatus === 'available') {
+                            $dbStatus = 'vacant';
+                        } elseif ($frontStatus === 'booked') {
+                            $dbStatus = 'occupied';
+                        } elseif ($frontStatus === 'pending') {
+                            $dbStatus = 'pending';
+                        }
+
+                        if ($roomId !== null && $roomId > 0) {
+                            $rStmt = mysqli_prepare($conn, "
+                                INSERT INTO rooms (id, business_id, branch_id, hostel_id, room_number, type, price, status)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                ON DUPLICATE KEY UPDATE
+                                    hostel_id = VALUES(hostel_id),
+                                    room_number = VALUES(room_number),
+                                    type = VALUES(type),
+                                    price = VALUES(price),
+                                    status = VALUES(status)
+                            ");
+                            // Params: roomId, businessId, branchId, hostelId, roomNumber, type, price, status
+                            mysqli_stmt_bind_param($rStmt, 'iiiissds', $roomId, $businessId, $branchId, $hostelId, $roomNumber, $type, $price, $dbStatus);
+                        } else {
+                            $rStmt = mysqli_prepare($conn, "
+                                INSERT INTO rooms (business_id, branch_id, hostel_id, room_number, type, price, status)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            ");
+                            // Params: businessId, branchId, hostelId, roomNumber, type, price, status
+                            mysqli_stmt_bind_param($rStmt, 'iiissds', $businessId, $branchId, $hostelId, $roomNumber, $type, $price, $dbStatus);
+                        }
+
+                        mysqli_stmt_execute($rStmt);
+                        mysqli_stmt_close($rStmt);
+                    }
+                }
+
                 echo json_encode(['id' => $hostelId, 'success' => true]);
             } else {
                 http_response_code(500);
                 echo json_encode(['error' => 'Failed to add hostel']);
             }
 
+            mysqli_stmt_close($stmt);
+            break;
+
+        case 'PUT':
+            $data = json_decode(file_get_contents('php://input'), true);
+            $hostelId = (int)($data['id'] ?? 0);
+            $ownerId = (int)($data['owner_id'] ?? 0);
+            if ($hostelId <= 0 || $ownerId <= 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid hostel/owner id']);
+                return;
+            }
+
+            $stmt = mysqli_prepare($conn, "UPDATE hostels SET owner_id = ? WHERE id = ? AND deleted_at IS NULL");
+            mysqli_stmt_bind_param($stmt, 'ii', $ownerId, $hostelId);
+            if (mysqli_stmt_execute($stmt)) {
+                echo json_encode(['success' => true]);
+            } else {
+                http_response_code(500);
+                echo json_encode(['error' => 'Could not assign hostel owner']);
+            }
             mysqli_stmt_close($stmt);
             break;
 
@@ -155,11 +821,23 @@ function handleBookings($method, $conn) {
         case 'GET':
             // Get all bookings with student details
             $result = mysqli_query($conn, "
-                SELECT b.*, h.name as hostel_name, r.room_number,
-                       u.name as student_name, u.email as student_email, u.phone as student_phone
+                SELECT
+                    b.id,
+                    b.user_id,
+                    b.room_id,
+                    b.status,
+                    b.start_date,
+                    b.end_date,
+                    b.created_at,
+                    r.hostel_id,
+                    r.room_number,
+                    h.name AS hostel_name,
+                    u.name AS student_name,
+                    u.email AS student_email,
+                    u.phone AS student_phone
                 FROM bookings b
-                LEFT JOIN hostels h ON b.hostel_id = h.id
-                LEFT JOIN rooms r ON b.room_id = r.id
+                INNER JOIN rooms r ON b.room_id = r.id
+                INNER JOIN hostels h ON r.hostel_id = h.id
                 LEFT JOIN users u ON b.user_id = u.id
                 WHERE b.deleted_at IS NULL
                 ORDER BY b.created_at DESC
@@ -167,24 +845,21 @@ function handleBookings($method, $conn) {
 
             $bookings = [];
             while ($row = mysqli_fetch_assoc($result)) {
-                // Extract registration number from user data or use a default format
-                $regNumber = 'MMU/' . date('Y', strtotime($row['created_at'])) . '/' . str_pad($row['user_id'], 3, '0', STR_PAD_LEFT);
-
                 $bookings[] = [
-                    'id' => (int)$row['id'],
-                    'hostel_id' => (int)$row['hostel_id'],
-                    'hostel_name' => $row['hostel_name'],
-                    'room_id' => $row['room_id'] ? (int)$row['room_id'] : null,
-                    'room_number' => $row['room_number'],
-                    'student_name' => $row['student_name'] ?: 'Unknown Student',
-                    'student_reg' => $regNumber,
-                    'student_email' => $row['student_email'] ?: '',
-                    'student_phone' => $row['student_phone'] ?: '',
-                    'check_in' => $row['start_date'],
-                    'check_out' => $row['end_date'],
-                    'status' => $row['status'],
-                    'total_amount' => 0.00, // Will be calculated from payments
-                    'created_at' => $row['created_at']
+                    // Frontend expects these keys
+                    'id'          => (int)$row['id'],
+                    'hostelId'    => (int)$row['hostel_id'],
+                    'roomId'      => (int)$row['room_id'],
+                    'studentName' => $row['student_name'] ?: 'Unknown Student',
+                    'regNo'       => '', // Not stored in DB currently
+                    'course'      => '', // Not stored in DB currently
+                    'status'      => $row['status'] ?: 'pending',
+                    'date'        => $row['start_date'],
+                    // Extra fields (useful for future UI)
+                    'email'       => $row['student_email'] ?: '',
+                    'phone'       => $row['student_phone'] ?: '',
+                    'hostelName'  => $row['hostel_name'] ?: '',
+                    'roomNumber'  => $row['room_number'] ?: '',
                 ];
             }
 
@@ -195,7 +870,7 @@ function handleBookings($method, $conn) {
             // Add new booking
             $data = json_decode(file_get_contents('php://input'), true);
 
-            if (!$data || !isset($data['hostel_id'])) {
+            if (!$data) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Invalid data']);
                 return;
@@ -203,9 +878,13 @@ function handleBookings($method, $conn) {
 
             // First, check if user exists or create one
             $userId = null;
-            $studentEmail = $data['student_email'] ?? '';
-            $studentName = $data['student_name'] ?? 'Unknown Student';
-            $studentPhone = $data['student_phone'] ?? '';
+            $studentEmail = trim((string)($data['email'] ?? $data['student_email'] ?? ''));
+            $studentName  = trim((string)($data['studentName'] ?? $data['student_name'] ?? $data['fullname'] ?? 'Unknown Student'));
+            $studentPhone = trim((string)($data['phone'] ?? $data['student_phone'] ?? ''));
+            if ($studentEmail === '') {
+                // Frontend may submit booking without email; use a deterministic default.
+                $studentEmail = 'student@mmu.ac.ug';
+            }
 
             if ($studentEmail) {
                 $userResult = mysqli_query($conn, "SELECT id FROM users WHERE email = '" . mysqli_real_escape_string($conn, $studentEmail) . "' LIMIT 1");
@@ -228,13 +907,20 @@ function handleBookings($method, $conn) {
             }
 
             // Find an available room or use the specified one
-            $roomId = $data['room_id'] ?? null;
+            $hostelId = isset($data['hostelId']) ? (int)$data['hostelId'] : ((isset($data['hostel_id']) ? (int)$data['hostel_id'] : 0));
+            $roomId = isset($data['roomId']) ? (int)$data['roomId'] : ((isset($data['room_id']) ? (int)$data['room_id'] : 0));
+            if ($roomId <= 0 && $hostelId <= 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Missing hostelId/roomId']);
+                return;
+            }
+
             if (!$roomId) {
                 // Find first available room in the hostel
                 $roomResult = mysqli_query($conn, "
                     SELECT id FROM rooms
-                    WHERE hostel_id = " . (int)$data['hostel_id'] . "
-                    AND status = 'vacant'
+                    WHERE hostel_id = " . (int)$hostelId . "
+                    AND status IN ('vacant','available')
                     AND deleted_at IS NULL
                     LIMIT 1
                 ");
@@ -250,30 +936,61 @@ function handleBookings($method, $conn) {
             }
 
             // Create booking
-            $stmt = mysqli_prepare($conn, "
-                INSERT INTO bookings (business_id, branch_id, user_id, room_id, status, start_date, end_date)
-                VALUES (1, 1, ?, ?, ?, ?, ?)
+            $status = trim((string)($data['status'] ?? 'pending'));
+            $checkIn = (string)($data['date'] ?? $data['check_in'] ?? date('Y-m-d'));
+            $checkOut = (string)($data['check_out'] ?? $data['end_date'] ?? date('Y-m-d', strtotime('+1 month', strtotime($checkIn))));
+
+            // Upsert booking by user+room+start_date to keep the DB in sync
+            $up = mysqli_prepare($conn, "
+                SELECT id FROM bookings
+                WHERE business_id = 1 AND branch_id = 1
+                  AND user_id = ?
+                  AND room_id = ?
+                  AND start_date = ?
+                  AND deleted_at IS NULL
+                LIMIT 1
             ");
+            mysqli_stmt_bind_param($up, 'iis', $userId, $roomId, $checkIn);
+            mysqli_stmt_execute($up);
+            mysqli_stmt_bind_result($up, $existingId);
+            $found = mysqli_stmt_fetch($up);
+            mysqli_stmt_close($up);
 
-            $status = $data['status'] ?? 'confirmed';
-            $checkIn = $data['check_in'] ?? date('Y-m-d');
-            $checkOut = $data['check_out'] ?? date('Y-m-d', strtotime('+1 month'));
-
-            mysqli_stmt_bind_param($stmt, 'iisss', $userId, $roomId, $status, $checkIn, $checkOut);
-
-            if (mysqli_stmt_execute($stmt)) {
-                $bookingId = mysqli_insert_id($conn);
-
-                // Update room status
-                mysqli_query($conn, "UPDATE rooms SET status = 'occupied' WHERE id = $roomId");
-
-                echo json_encode(['id' => $bookingId, 'success' => true]);
+            if ($found) {
+                $stmt = mysqli_prepare($conn, "
+                    UPDATE bookings
+                    SET status = ?, end_date = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND deleted_at IS NULL
+                ");
+                mysqli_stmt_bind_param($stmt, 'ssi', $status, $checkOut, $existingId);
+                mysqli_stmt_execute($stmt);
+                mysqli_stmt_close($stmt);
+                $bookingId = (int)$existingId;
             } else {
-                http_response_code(500);
-                echo json_encode(['error' => 'Failed to add booking']);
+                $stmt = mysqli_prepare($conn, "
+                    INSERT INTO bookings (business_id, branch_id, user_id, room_id, status, start_date, end_date)
+                    VALUES (1, 1, ?, ?, ?, ?, ?)
+                ");
+                mysqli_stmt_bind_param($stmt, 'iisss', $userId, $roomId, $status, $checkIn, $checkOut);
+                if (mysqli_stmt_execute($stmt)) {
+                    $bookingId = mysqli_insert_id($conn);
+                } else {
+                    http_response_code(500);
+                    echo json_encode(['error' => 'Failed to add booking']);
+                    mysqli_stmt_close($stmt);
+                    return;
+                }
+                mysqli_stmt_close($stmt);
             }
 
-            mysqli_stmt_close($stmt);
+            // Update room status (map frontend statuses to DB statuses)
+            $roomDbStatus = 'occupied';
+            if ($status === 'pending') {
+                $roomDbStatus = 'pending';
+            }
+            mysqli_query($conn, "UPDATE rooms SET status = '" . mysqli_real_escape_string($conn, $roomDbStatus) . "' WHERE id = " . (int)$roomId . " AND deleted_at IS NULL");
+
+            echo json_encode(['id' => (int)$bookingId, 'success' => true]);
             break;
 
         default:
