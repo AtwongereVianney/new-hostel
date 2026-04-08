@@ -155,7 +155,7 @@ auth_require_admin();
                             <h5 class="card-title mb-3"><i class="bi bi-people me-2"></i> Users</h5>
                             <p class="card-text mb-3">Manage user accounts and roles.</p>
                             <div class="card-actions">
-                                <a href="#" class="btn btn-light btn-sm"><i class="bi bi-eye me-1"></i> View Users</a>
+                                <a href="manage_hostel_owners.php" class="btn btn-light btn-sm"><i class="bi bi-eye me-1"></i> View & Add Owners</a>
                             </div>
                         </div>
                     </div>
