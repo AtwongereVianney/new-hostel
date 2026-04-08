@@ -1,8 +1,8 @@
 <?php
-// dashboard/index.php
 session_start();
-// Optionally, check if user is logged in
-// if (!isset($_SESSION['user_id'])) { header('Location: ../modules/auth/login.php'); exit; }
+require_once '../../config/db.php';
+require_once '../../includes/auth.php';
+auth_require_admin();
 ?>
 <!DOCTYPE html>
 <html lang="en">

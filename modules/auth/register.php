@@ -13,7 +13,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($password !== $confirm_password) {
             $error = 'Passwords do not match.';
         } else {
-            $conn = $mysqli;
             $stmt = mysqli_prepare($conn, "SELECT id FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1");
             mysqli_stmt_bind_param($stmt, 's', $email);
             mysqli_stmt_execute($stmt);
@@ -24,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $hashed_password = password_hash($password, PASSWORD_DEFAULT);
                 $business_id = 1; // Default or get from context
                 $branch_id = 1;   // Default or get from context
-                $stmt2 = mysqli_prepare($conn, "INSERT INTO users (business_id, branch_id, name, email, password) VALUES (?, ?, ?, ?, ?)");
+                $stmt2 = mysqli_prepare($conn, "INSERT INTO users (business_id, branch_id, name, email, password, user_type) VALUES (?, ?, ?, ?, ?, 'student')");
                 mysqli_stmt_bind_param($stmt2, 'iisss', $business_id, $branch_id, $name, $email, $hashed_password);
                 if (mysqli_stmt_execute($stmt2)) {
                     $success = 'Registration successful! Redirecting to login...';

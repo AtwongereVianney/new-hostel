@@ -1,5 +1,7 @@
 <?php
 require_once '../../config/db.php';
+require_once '../../includes/auth.php';
+auth_require_admin();
 
 // Handle Add Room
 if (isset($_POST['add_room'])) {

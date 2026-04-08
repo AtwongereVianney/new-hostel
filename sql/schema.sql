@@ -56,7 +56,8 @@ CREATE TABLE users (
     password VARCHAR(255) NOT NULL,
     phone VARCHAR(20),
     role_id INT,
-    status VARCHAR(20) DEFAULT 'active', -- 'pending', 'active', 'suspended'
+    user_type ENUM('admin','hostel_owner','student') NOT NULL DEFAULT 'student',
+    permissions_json TEXT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at DATETIME DEFAULT NULL,

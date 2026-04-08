@@ -39,14 +39,6 @@ switch ($request) {
     case '/bookings':
         handleBookings($method, $conn);
         break;
-    case 'login':
-    case '/login':
-        handleLogin($method, $conn);
-        break;
-    case 'users':
-    case '/users':
-        handleUsers($method, $conn);
-        break;
     case 'pay':
     case '/pay':
         handlePayment($method, $conn);
@@ -70,17 +62,11 @@ function handleHostels($method, $conn) {
     switch ($method) {
         case 'GET':
             // Get all hostels
-            $ownerId = isset($_GET['owner_id']) ? (int)$_GET['owner_id'] : null;
-            $where = "WHERE h.deleted_at IS NULL";
-            if ($ownerId) {
-                $where .= " AND h.owner_id = $ownerId";
-            }
-
             $result = mysqli_query($conn, "
                 SELECT h.*, hi.image_path
                 FROM hostels h
                 LEFT JOIN hostel_images hi ON h.id = hi.hostel_id
-                $where
+                WHERE h.deleted_at IS NULL
                 ORDER BY h.id DESC
             ");
 

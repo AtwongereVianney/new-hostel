@@ -1,5 +1,7 @@
 <?php
 require_once '../../config/db.php';
+require_once '../../includes/auth.php';
+auth_require_admin();
 
 // Add this function to handle image paths correctly
 function getCorrectImagePath($imagePath) {
@@ -28,7 +30,7 @@ if (isset($_POST['add_hostel'])) {
     $hostel_name = trim($_POST['hostel_name']);
     $hostel_address = trim($_POST['hostel_address']);
     $hostel_description = trim($_POST['hostel_description']);
-    $owner_id = 1; // You may want to set this dynamically
+    $owner_id = intval($_POST['owner_id'] ?? 1);
     $image_path = null;
     
     if (isset($_FILES['hostel_image']) && $_FILES['hostel_image']['error'] === UPLOAD_ERR_OK) {
@@ -91,9 +93,10 @@ if (isset($_POST['edit_hostel'])) {
         }
     }
     
+    $owner_id = intval($_POST['owner_id'] ?? 1);
     if ($hostel_id && $hostel_name) {
-        $stmt = mysqli_prepare($conn, "UPDATE hostels SET name = ?, address = ?, description = ? WHERE id = ?");
-        mysqli_stmt_bind_param($stmt, 'sssi', $hostel_name, $hostel_address, $hostel_description, $hostel_id);
+        $stmt = mysqli_prepare($conn, "UPDATE hostels SET name = ?, address = ?, description = ?, owner_id = ? WHERE id = ?");
+        mysqli_stmt_bind_param($stmt, 'sssii', $hostel_name, $hostel_address, $hostel_description, $owner_id, $hostel_id);
         mysqli_stmt_execute($stmt);
         mysqli_stmt_close($stmt);
         
@@ -134,7 +137,13 @@ if (isset($_POST['delete_hostel'])) {
 
 // Fetch all hostels with images, business, and branch info
 $hostels = [];
-$query = "SELECT h.*, hi.image_path, b.name AS business_name, br.name AS branch_name FROM hostels h LEFT JOIN hostel_images hi ON h.id = hi.hostel_id AND hi.deleted_at IS NULL LEFT JOIN business b ON h.business_id = b.id LEFT JOIN branch br ON h.branch_id = br.id WHERE h.deleted_at IS NULL ORDER BY h.id DESC";
+$query = "SELECT h.*, hi.image_path, b.name AS business_name, br.name AS branch_name, ou.name AS owner_name, ou.email AS owner_email
+FROM hostels h
+LEFT JOIN hostel_images hi ON h.id = hi.hostel_id AND hi.deleted_at IS NULL
+LEFT JOIN business b ON h.business_id = b.id
+LEFT JOIN branch br ON h.branch_id = br.id
+LEFT JOIN users ou ON h.owner_id = ou.id
+WHERE h.deleted_at IS NULL ORDER BY h.id DESC";
 $result = mysqli_query($conn, $query);
 while ($row = mysqli_fetch_assoc($result)) {
     $hostels[] = $row;
@@ -151,6 +160,17 @@ $all_branches = [];
 $branches_result = mysqli_query($conn, "SELECT id, business_id, name FROM branch WHERE deleted_at IS NULL");
 while ($br = mysqli_fetch_assoc($branches_result)) {
     $all_branches[] = $br;
+}
+
+$owner_users = [];
+$owners_result = mysqli_query($conn, "
+    SELECT DISTINCT u.id, u.name, u.email FROM users u
+    WHERE u.deleted_at IS NULL
+      AND (u.user_type = 'hostel_owner' OR u.id IN (SELECT DISTINCT owner_id FROM hostels WHERE deleted_at IS NULL))
+    ORDER BY u.name
+");
+while ($owners_result && ($ou = mysqli_fetch_assoc($owners_result))) {
+    $owner_users[] = $ou;
 }
 ?>
 <!DOCTYPE html>
@@ -295,6 +315,7 @@ while ($br = mysqli_fetch_assoc($branches_result)) {
                             <div class="card-body">
                                 <h5 class="card-title mb-2 responsive-title"><?= htmlspecialchars($hostel['name']) ?></h5>
                                 <p class="card-text responsive-text mb-1"><small class="text-muted">Business: <?= htmlspecialchars($hostel['business_name']) ?> | Branch: <?= htmlspecialchars($hostel['branch_name']) ?></small></p>
+                                <p class="card-text responsive-text mb-1"><small class="text-muted">Owner: <?= htmlspecialchars(($hostel['owner_name'] ?? '') ?: '—') ?><?= !empty($hostel['owner_email']) ? ' (' . htmlspecialchars($hostel['owner_email']) . ')' : '' ?></small></p>
                                 <p class="card-text responsive-text mb-1"><small class="text-muted">Address: <?= htmlspecialchars($hostel['address']) ?></small></p>
                                 <p class="card-text responsive-text mb-2"><small class="text-muted">Description: <?= htmlspecialchars($hostel['description']) ?></small></p>
                                 <div class="card-actions">
@@ -368,6 +389,24 @@ while ($br = mysqli_fetch_assoc($branches_result)) {
                             <div class="modal-body">
                               <input type="hidden" name="hostel_id" value="<?= $hostel['id'] ?>">
                               <div class="mb-3">
+                                <label class="form-label">Hostel owner</label>
+                                <select class="form-select" name="owner_id" required>
+                                  <?php foreach ($owner_users as $ou): ?>
+                                    <option value="<?= (int)$ou['id'] ?>" <?= ((int)($hostel['owner_id'] ?? 0) === (int)$ou['id']) ? 'selected' : '' ?>><?= htmlspecialchars($ou['name'] . ' — ' . $ou['email']) ?></option>
+                                  <?php endforeach; ?>
+                                  <?php
+                                  $curOid = (int) ($hostel['owner_id'] ?? 0);
+                                  $ids = array_column($owner_users, 'id');
+                                  if ($curOid && !in_array($curOid, array_map('intval', $ids), true)) {
+                                      $ou = mysqli_fetch_assoc(mysqli_query($conn, 'SELECT id, name, email FROM users WHERE id = ' . $curOid . ' LIMIT 1'));
+                                      if ($ou) {
+                                          echo '<option value="' . (int) $ou['id'] . '" selected>' . htmlspecialchars($ou['name'] . ' — ' . $ou['email']) . '</option>';
+                                      }
+                                  }
+                                  ?>
+                                </select>
+                              </div>
+                              <div class="mb-3">
                                 <label for="hostel_name_edit<?= $hostel['id'] ?>" class="form-label">Hostel Name</label>
                                 <input type="text" class="form-control" id="hostel_name_edit<?= $hostel['id'] ?>" name="hostel_name" value="<?= htmlspecialchars($hostel['name']) ?>" required>
                               </div>
@@ -440,6 +479,16 @@ while ($br = mysqli_fetch_assoc($branches_result)) {
                             <option value="<?= $br['id'] ?>" data-business="<?= $br['business_id'] ?>"><?= htmlspecialchars($br['name']) ?></option>
                           <?php endforeach; ?>
                         </select>
+                      </div>
+                      <div class="mb-3">
+                        <label for="owner_id" class="form-label">Hostel owner</label>
+                        <select class="form-select" id="owner_id" name="owner_id" required>
+                          <option value="">Select owner</option>
+                          <?php foreach ($owner_users as $ou): ?>
+                            <option value="<?= (int)$ou['id'] ?>"><?= htmlspecialchars($ou['name'] . ' — ' . $ou['email']) ?></option>
+                          <?php endforeach; ?>
+                        </select>
+                        <small class="text-muted">Create accounts under Hostel owners in the dashboard if empty.</small>
                       </div>
                       <div class="mb-3">
                         <label for="hostel_name" class="form-label">Hostel Name</label>

@@ -2,31 +2,43 @@
 // Login form and authentication logic
 session_start();
 require_once '../../config/db.php';
+require_once '../../includes/auth.php';
 
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = trim($_POST['email']);
     $password = trim($_POST['password']);
     if ($email && $password) {
-        $conn = $conn;
-        $stmt = mysqli_prepare($conn, "SELECT id, password FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1");
+        $stmt = mysqli_prepare($conn, "
+            SELECT id, name, email, password, user_type, permissions_json
+            FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1
+        ");
         mysqli_stmt_bind_param($stmt, 's', $email);
         mysqli_stmt_execute($stmt);
-        mysqli_stmt_store_result($stmt);
-        if (mysqli_stmt_num_rows($stmt) === 1) {
-            mysqli_stmt_bind_result($stmt, $user_id, $hashed_password);
-            mysqli_stmt_fetch($stmt);
-            if (password_verify($password, $hashed_password)) {
-                $_SESSION['user_id'] = $user_id;
+        mysqli_stmt_bind_result($stmt, $uid, $uname, $uemail, $hash, $utype, $permJson);
+        $fetched = mysqli_stmt_fetch($stmt);
+        mysqli_stmt_close($stmt);
+
+        if ($fetched && password_verify($password, $hash)) {
+            $_SESSION['user_id'] = (int) $uid;
+            $_SESSION['user_name'] = $uname;
+            $_SESSION['user_email'] = $uemail;
+            $_SESSION['user_type'] = $utype ?? 'student';
+            $_SESSION['owner_permissions'] = auth_merge_owner_permissions($permJson);
+
+            $type = $_SESSION['user_type'];
+            if ($type === 'admin') {
                 header('Location: ../dashboard/index.php');
                 exit;
-            } else {
-                $error = 'Invalid email or password.';
             }
-        } else {
-            $error = 'Invalid email or password.';
+            if ($type === 'hostel_owner') {
+                header('Location: ../dashboard/owner_hostels.php');
+                exit;
+            }
+            header('Location: ../dashboard/no_access.php');
+            exit;
         }
-        mysqli_stmt_close($stmt);
+        $error = 'Invalid email or password.';
     } else {
         $error = 'Please fill in all fields.';
     }

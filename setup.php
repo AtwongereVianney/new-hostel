@@ -15,41 +15,15 @@ if (mysqli_num_rows($result) == 0) {
     echo "Created default branch\n";
 }
 
-// Ensure status column exists in users
-$checkStatus = mysqli_query($conn, "SHOW COLUMNS FROM users LIKE 'status'");
-if (mysqli_num_rows($checkStatus) == 0) {
-    mysqli_query($conn, "ALTER TABLE users ADD COLUMN status VARCHAR(20) DEFAULT 'active' AFTER role_id");
-    echo "Added status column to users table\n";
-}
-
-// Insert default roles
-$roles = [
-    ['id' => 1, 'name' => 'super_admin'],
-    ['id' => 2, 'name' => 'hostel_owner'],
-    ['id' => 3, 'name' => 'student']
-];
-foreach ($roles as $role) {
-    $rId = $role['id'];
-    $rName = $role['name'];
-    $res = mysqli_query($conn, "SELECT id FROM roles WHERE id = $rId");
-    if (mysqli_num_rows($res) == 0) {
-        mysqli_query($conn, "INSERT INTO roles (id, business_id, branch_id, name) VALUES ($rId, 1, 1, '$rName')");
-        echo "Created role: $rName\n";
-    }
-}
-
 // Insert default admin user if it doesn't exist
 $result = mysqli_query($conn, "SELECT id FROM users WHERE email = 'admin@mmu.edu'");
 if (mysqli_num_rows($result) == 0) {
     $password = password_hash('admin123', PASSWORD_DEFAULT);
     mysqli_query($conn, "
-        INSERT INTO users (business_id, branch_id, name, email, password, phone, role_id, status)
-        VALUES (1, 1, 'System Administrator', 'admin@mmu.edu', '$password', '+256700000000', 1, 'active')
+        INSERT INTO users (business_id, branch_id, name, email, password, phone, user_type)
+        VALUES (1, 1, 'System Administrator', 'admin@mmu.edu', '$password', '+256700000000', 'admin')
     ");
     echo "Created default admin user\n";
-} else {
-    // Ensure admin user has correct role
-    mysqli_query($conn, "UPDATE users SET role_id = 1 WHERE email = 'admin@mmu.edu'");
 }
 
 // Insert some sample rooms for existing hostels
@@ -71,6 +45,9 @@ if ($row['count'] == 0) {
     }
     echo "Created sample rooms\n";
 }
+
+// Ensure default admin is always typed as admin (safe if column was added later)
+@mysqli_query($conn, "UPDATE users SET user_type = 'admin' WHERE email = 'admin@mmu.edu' AND deleted_at IS NULL");
 
 echo "Database setup complete!\n";
 ?>

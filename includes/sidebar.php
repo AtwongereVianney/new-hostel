@@ -1,3 +1,11 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+$sidebarUserName = htmlspecialchars($_SESSION['user_name'] ?? 'User', ENT_QUOTES, 'UTF-8');
+$sidebarRoleLabel = (($_SESSION['user_type'] ?? '') === 'admin') ? 'Administrator' : 'User';
+$isAdmin = ($_SESSION['user_type'] ?? '') === 'admin';
+?>
 <!-- Responsive Sidebar using Bootstrap -->
 <style>
     .sidebar-nav {
@@ -123,11 +131,19 @@
     <div class="flex-grow-1 px-3 py-2">
         <ul class="nav nav-pills flex-column">
             <li class="nav-item">
-                <a href="../dashboard/index.php" class="nav-link active">
+                <a href="../modules/dashboard/index.php" class="nav-link active">
                     <i class="bi bi-speedometer2"></i>
                     <span>Dashboard</span>
                 </a>
             </li>
+            <?php if ($isAdmin): ?>
+            <li class="nav-item">
+                <a href="../modules/dashboard/manage_hostel_owners.php" class="nav-link link-dark">
+                    <i class="bi bi-person-lines-fill"></i>
+                    <span>Hostel owners</span>
+                </a>
+            </li>
+            <?php endif; ?>
             <li class="nav-item">
                 <a href="business.php" class="nav-link link-dark">
                     <i class="bi bi-building"></i>
@@ -159,13 +175,13 @@
                 </a>
             </li>
             <li class="nav-item">
-                <a href="../dashboard/hostels.php" class="nav-link link-dark">
+                <a href="../modules/dashboard/hostels.php" class="nav-link link-dark">
                     <i class="bi bi-house-door"></i>
                     <span>Hostels</span>
                 </a>
             </li>
             <li class="nav-item">
-                <a href="../dashboard/rooms.php" class="nav-link link-dark">
+                <a href="../modules/dashboard/rooms.php" class="nav-link link-dark">
                     <i class="bi bi-door-open"></i>
                     <span>Rooms</span>
                 </a>
@@ -284,8 +300,8 @@
                 <img src="https://ui-avatars.com/api/?name=User&background=0d6efd&color=ffffff" 
                      alt="user" width="32" height="32" class="rounded-circle me-2 user-avatar">
                 <div class="d-flex flex-column">
-                    <strong class="text-primary">User</strong>
-                    <small class="text-muted">Administrator</small>
+                    <strong class="text-primary"><?php echo $sidebarUserName; ?></strong>
+                    <small class="text-muted"><?php echo htmlspecialchars($sidebarRoleLabel, ENT_QUOTES, 'UTF-8'); ?></small>
                 </div>
             </a>
             <ul class="dropdown-menu dropdown-menu-end text-small shadow" aria-labelledby="dropdownUser">
@@ -303,7 +319,7 @@
                 </li>
                 <li><hr class="dropdown-divider"></li>
                 <li>
-                    <a class="dropdown-item d-flex align-items-center text-danger" href="../auth/logout.php">
+                    <a class="dropdown-item d-flex align-items-center text-danger" href="../modules/auth/logout.php">
                         <i class="bi bi-box-arrow-right me-2"></i>
                         Sign out
                     </a>
