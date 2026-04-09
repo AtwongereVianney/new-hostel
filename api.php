@@ -5,6 +5,7 @@ header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
 
 require_once __DIR__ . '/config/db.php';
+require_once __DIR__ . '/includes/mailer.php';
 ensureHostelExtendedColumns($conn);
 
 // IMPORTANT: Replace this with your LIVE Flutterwave Secret Key (FLWSECK-XXXX)
@@ -188,21 +189,14 @@ function handleBookingApproval($method, $conn) {
         mysqli_stmt_close($ins);
     }
 
-    $subject = 'MMU Hostel Booking Approved - Login Credentials';
-    $message = "Hello {$studentName},\n\n" .
-        "Your hostel booking has been approved.\n" .
-        "Hostel: {$hostelName}\nRoom: {$roomNumber}\nReg No: {$regNo}\n\n" .
-        "Use the same Admin Login form to access your student dashboard.\n" .
-        "Email: {$email}\nPassword: {$plainPassword}\n\n" .
-        "Please change this password after first login.\n\n" .
-        "MMU Hostel System";
-    $headers = "From: no-reply@mmu.local\r\n";
-    $mailSent = @mail($email, $subject, $message, $headers);
+    $mailRes = mmu_send_student_credentials_email($email, $studentName, $hostelName, $roomNumber, $regNo, $plainPassword);
+    $mailSent = !empty($mailRes['success']);
 
     echo json_encode([
         'success' => true,
         'user_id' => $userId,
         'email_sent' => (bool)$mailSent,
+        'email_error' => $mailSent ? null : ($mailRes['error'] ?? 'Unknown PHPMailer error'),
         'email' => $email,
     ]);
 }
@@ -224,6 +218,79 @@ function ensureHostelExtendedColumns($conn) {
             mysqli_query($conn, "ALTER TABLE hostels ADD COLUMN {$colDef}");
         }
     }
+}
+
+/**
+ * Decode base64 room image from JSON sync, validate, store under assets/images/rooms/, link in room_images.
+ * @param array $uploadPayload ['base64' => string, 'filename' => string]
+ * @return ?string Relative path e.g. assets/images/rooms/room_xxx.jpg or null on failure
+ */
+function mmu_save_room_image_upload($conn, $roomId, $uploadPayload) {
+    $roomId = (int)$roomId;
+    if ($roomId <= 0 || !is_array($uploadPayload)) {
+        return null;
+    }
+    $raw = trim((string)($uploadPayload['base64'] ?? ''));
+    if ($raw === '') {
+        return null;
+    }
+    if (preg_match('/^data:image\/[\w+]+;base64,(.+)$/i', $raw, $m)) {
+        $raw = $m[1];
+    }
+    $raw = preg_replace('/\s+/', '', $raw);
+    $bin = base64_decode($raw, true);
+    if ($bin === false || strlen($bin) < 32) {
+        return null;
+    }
+    if (strlen($bin) > 2 * 1024 * 1024) {
+        return null;
+    }
+    $info = @getimagesizefromstring($bin);
+    if ($info === false) {
+        return null;
+    }
+    $mime = $info['mime'] ?? '';
+    $extMap = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/gif' => 'gif',
+        'image/webp' => 'webp',
+    ];
+    $ext = $extMap[$mime] ?? null;
+    if ($ext === null) {
+        return null;
+    }
+
+    $filename = preg_replace('/[^a-zA-Z0-9._\-]/', '', (string)($uploadPayload['filename'] ?? 'room.jpg'));
+    $fnExt = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    if (!in_array($fnExt, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true)) {
+        $filename = 'room.' . $ext;
+    }
+
+    $safeName = 'room_' . uniqid('', true) . '.' . $ext;
+    $relPath = 'assets/images/rooms/' . $safeName;
+    $fullPath = __DIR__ . '/' . $relPath;
+    $dir = dirname($fullPath);
+    if (!is_dir($dir)) {
+        if (!mkdir($dir, 0755, true) && !is_dir($dir)) {
+            return null;
+        }
+    }
+    if (file_put_contents($fullPath, $bin) === false) {
+        return null;
+    }
+
+    $stmt = mysqli_prepare($conn, "UPDATE room_images SET deleted_at = NOW() WHERE room_id = ? AND deleted_at IS NULL");
+    mysqli_stmt_bind_param($stmt, 'i', $roomId);
+    mysqli_stmt_execute($stmt);
+    mysqli_stmt_close($stmt);
+
+    $stmt = mysqli_prepare($conn, "INSERT INTO room_images (room_id, image_path) VALUES (?, ?)");
+    mysqli_stmt_bind_param($stmt, 'is', $roomId, $relPath);
+    mysqli_stmt_execute($stmt);
+    mysqli_stmt_close($stmt);
+
+    return $relPath;
 }
 
 function handleRoles($method, $conn) {
@@ -488,9 +555,17 @@ function handleUsers($method, $conn) {
                 'manage_bookings' => false,
             ];
 
-            if ($name === '' || $email === '' || strlen($password) < 6) {
+            if ($name === '' || $email === '') {
                 http_response_code(400);
-                echo json_encode(['error' => 'Name, email and password (min 6 chars) are required']);
+                echo json_encode(['error' => 'Name and email are required']);
+                return;
+            }
+            if ($password === '') {
+                $password = 'MMU' . rand(1000, 9999) . '!';
+            }
+            if (strlen($password) < 6) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Password must be at least 6 characters']);
                 return;
             }
 
@@ -515,10 +590,17 @@ function handleUsers($method, $conn) {
             mysqli_stmt_bind_param($stmt, 'iissssiss', $businessId, $branchId, $name, $email, $hash, $phone, $roleId, $role, $permJson);
             if (mysqli_stmt_execute($stmt)) {
                 $id = mysqli_insert_id($conn);
-                echo json_encode(['success' => true, 'id' => (int)$id]);
+                echo json_encode([
+                    'success' => true,
+                    'id' => (int)$id,
+                    'temporary_password' => ($data['password'] ?? '') === '' ? $password : null,
+                ]);
             } else {
                 http_response_code(500);
-                echo json_encode(['error' => 'Could not create user']);
+                echo json_encode([
+                    'error' => 'Could not create user',
+                    'db_error' => mysqli_stmt_error($stmt) ?: mysqli_error($conn),
+                ]);
             }
             mysqli_stmt_close($stmt);
             break;
@@ -628,10 +710,13 @@ function handleHostels($method, $conn) {
             // Attach rooms from the database to each hostel
             foreach ($hostels as $hostelId => &$h) {
                 $roomResult = mysqli_query($conn, "
-                    SELECT id, room_number, type, price, status
-                    FROM rooms
-                    WHERE hostel_id = " . (int)$hostelId . " AND deleted_at IS NULL
-                    ORDER BY id ASC
+                    SELECT r.id, r.room_number, r.type, r.price, r.status,
+                        (SELECT ri.image_path FROM room_images ri
+                         WHERE ri.room_id = r.id AND ri.deleted_at IS NULL
+                         ORDER BY ri.id ASC LIMIT 1) AS image_path
+                    FROM rooms r
+                    WHERE r.hostel_id = " . (int)$hostelId . " AND r.deleted_at IS NULL
+                    ORDER BY r.id ASC
                 ");
 
                 while ($roomRow = mysqli_fetch_assoc($roomResult)) {
@@ -643,12 +728,14 @@ function handleHostels($method, $conn) {
                         $frontStatus = 'booked';
                     }
 
+                    $imgPath = isset($roomRow['image_path']) ? trim((string)$roomRow['image_path']) : '';
                     $h['rooms'][] = [
                         'id' => (int)$roomRow['id'],
                         'number' => $roomRow['room_number'],
                         'type' => $roomRow['type'] ?? '',
                         'price' => (float)$roomRow['price'],
                         'status' => $frontStatus,
+                        'image' => $imgPath !== '' ? $imgPath : null,
                         // Frontend expects these optional fields; DB schema doesn't store them.
                         'confirmationFee' => 50000,
                         'floor' => null,
@@ -775,7 +862,17 @@ function handleHostels($method, $conn) {
                         }
 
                         mysqli_stmt_execute($rStmt);
+                        $actualRoomId = 0;
+                        if ($roomId !== null && $roomId > 0) {
+                            $actualRoomId = $roomId;
+                        } else {
+                            $actualRoomId = (int)mysqli_insert_id($conn);
+                        }
                         mysqli_stmt_close($rStmt);
+
+                        if ($actualRoomId > 0 && !empty($room['image_upload']) && is_array($room['image_upload'])) {
+                            mmu_save_room_image_upload($conn, $actualRoomId, $room['image_upload']);
+                        }
                     }
                 }
 
@@ -848,6 +945,7 @@ function handleBookings($method, $conn) {
                 $bookings[] = [
                     // Frontend expects these keys
                     'id'          => (int)$row['id'],
+                    'userId'      => isset($row['user_id']) ? (int)$row['user_id'] : null,
                     'hostelId'    => (int)$row['hostel_id'],
                     'roomId'      => (int)$row['room_id'],
                     'studentName' => $row['student_name'] ?: 'Unknown Student',
