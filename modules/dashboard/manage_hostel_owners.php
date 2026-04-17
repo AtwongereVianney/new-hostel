@@ -222,11 +222,7 @@ $permLabels = [
                         <label class="form-label">Phone</label>
                         <input type="text" name="phone" class="form-control">
                     </div>
-                    <div class="col-md-4">
-                        <label class="form-label">Password</label>
-                        <input type="password" name="password" class="form-control" minlength="6" placeholder="Leave blank to auto-generate">
-                        <div class="text-muted small mt-1">If blank, a random password will be emailed.</div>
-                    </div>
+
                     <div class="col-12">
                         <label class="form-label d-block">Permissions</label>
                         <?php foreach ($permLabels as $key => $label): ?>
