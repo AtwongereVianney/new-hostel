@@ -45,7 +45,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ");
                 mysqli_stmt_bind_param($stmt, 'sssss', $name, $email, $hash, $phone, $permJson);
                 if (mysqli_stmt_execute($stmt)) {
+                    $new_user_id = mysqli_insert_id($conn);
                     $message = 'Hostel owner account created.';
+                    
+                    if (!empty($_POST['assigned_hostels']) && is_array($_POST['assigned_hostels'])) {
+                        $hostel_ids = array_map('intval', $_POST['assigned_hostels']);
+                        $ids_csv = implode(',', $hostel_ids);
+                        if (!empty($ids_csv)) {
+                            mysqli_query($conn, "UPDATE hostels SET owner_id = $new_user_id WHERE id IN ($ids_csv)");
+                        }
+                    }
                 } else {
                     $error = 'Could not create account.';
                 }
@@ -82,6 +91,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if (mysqli_stmt_execute($stmt)) {
                 $message = 'Owner updated.';
+                
+                $adminRes = mysqli_query($conn, "SELECT id FROM users WHERE user_type = 'admin' ORDER BY id ASC LIMIT 1");
+                $adminId = 1;
+                if ($adminRes && $adminRow = mysqli_fetch_assoc($adminRes)) {
+                    $adminId = (int)$adminRow['id'];
+                }
+                
+                mysqli_query($conn, "UPDATE hostels SET owner_id = $adminId WHERE owner_id = $id AND deleted_at IS NULL");
+                
+                if (!empty($_POST['assigned_hostels']) && is_array($_POST['assigned_hostels'])) {
+                    $hostel_ids = array_map('intval', $_POST['assigned_hostels']);
+                    $ids_csv = implode(',', $hostel_ids);
+                    if (!empty($ids_csv)) {
+                        mysqli_query($conn, "UPDATE hostels SET owner_id = $id WHERE id IN ($ids_csv)");
+                    }
+                }
             } else {
                 $error = 'Could not update (email may be in use).';
             }
@@ -118,6 +143,12 @@ $res = mysqli_query($conn, "
 ");
 while ($res && ($row = mysqli_fetch_assoc($res))) {
     $owners[] = $row;
+}
+
+$all_hostels = [];
+$res_hostels = mysqli_query($conn, "SELECT id, name, owner_id FROM hostels WHERE deleted_at IS NULL ORDER BY name");
+while ($res_hostels && ($row_h = mysqli_fetch_assoc($res_hostels))) {
+    $all_hostels[] = $row_h;
 }
 
 $permLabels = [
@@ -194,6 +225,17 @@ $permLabels = [
                         <?php endforeach; ?>
                     </div>
                     <div class="col-12">
+                        <label class="form-label">Assign Hostels</label>
+                        <select name="assigned_hostels[]" class="form-select" multiple size="3">
+                            <?php foreach ($all_hostels as $h): ?>
+                                <option value="<?php echo (int)$h['id']; ?>">
+                                    <?php echo htmlspecialchars($h['name']); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <small class="text-muted">Hold Ctrl (Windows) or Cmd (Mac) to select multiple. You can also assign these later.</small>
+                    </div>
+                    <div class="col-12">
                         <button type="submit" name="create_owner" class="btn btn-primary">Create account</button>
                     </div>
                 </form>
@@ -210,6 +252,7 @@ $permLabels = [
                                 <th>Name</th>
                                 <th>Email</th>
                                 <th>Phone</th>
+                                <th>Assigned Hostels</th>
                                 <th>Permissions</th>
                                 <th></th>
                             </tr>
@@ -219,11 +262,19 @@ $permLabels = [
                             <?php
                             $p = auth_merge_owner_permissions($o['permissions_json']);
                             $psum = implode(', ', array_keys(array_filter($p)));
+                            $assigned_h = [];
+                            foreach ($all_hostels as $h) {
+                                if ((int)$h['owner_id'] === (int)$o['id']) {
+                                    $assigned_h[] = $h['name'];
+                                }
+                            }
+                            $assigned_names = implode(', ', $assigned_h);
                             ?>
                             <tr>
                                 <td><?php echo htmlspecialchars($o['name']); ?></td>
                                 <td><?php echo htmlspecialchars($o['email']); ?></td>
                                 <td><?php echo htmlspecialchars($o['phone'] ?? ''); ?></td>
+                                <td><small class="text-muted"><?php echo htmlspecialchars($assigned_names ?: 'None'); ?></small></td>
                                 <td><small class="text-muted"><?php echo htmlspecialchars($psum ?: 'none'); ?></small></td>
                                 <td class="text-end">
                                     <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#edit<?php echo (int) $o['id']; ?>">Edit</button>
@@ -231,7 +282,7 @@ $permLabels = [
                             </tr>
                         <?php endforeach; ?>
                         <?php if (count($owners) === 0): ?>
-                            <tr><td colspan="5" class="text-center text-muted py-4">No hostel owners yet.</td></tr>
+                            <tr><td colspan="6" class="text-center text-muted py-4">No hostel owners yet.</td></tr>
                         <?php endif; ?>
                         </tbody>
                     </table>
@@ -280,6 +331,17 @@ $permLabels = [
                                             <label class="form-check-label" for="<?php echo htmlspecialchars($fid); ?>"><?php echo htmlspecialchars($label); ?></label>
                                         </div>
                                     <?php endforeach; ?>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Assigned Hostels</label>
+                                    <select name="assigned_hostels[]" class="form-select" multiple size="3">
+                                        <?php foreach ($all_hostels as $h): ?>
+                                            <option value="<?php echo (int)$h['id']; ?>" <?php echo ((int)$h['owner_id'] === (int)$o['id']) ? 'selected' : ''; ?>>
+                                                <?php echo htmlspecialchars($h['name']); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <small class="text-muted">Hold Ctrl (Windows) or Cmd (Mac) to select multiple.</small>
                                 </div>
                             </div>
                         </div>

@@ -590,6 +590,19 @@ function handleUsers($method, $conn) {
             mysqli_stmt_bind_param($stmt, 'iissssiss', $businessId, $branchId, $name, $email, $hash, $phone, $roleId, $role, $permJson);
             if (mysqli_stmt_execute($stmt)) {
                 $id = mysqli_insert_id($conn);
+                
+                if (isset($data['assigned_hostel_ids']) && is_array($data['assigned_hostel_ids'])) {
+                     foreach ($data['assigned_hostel_ids'] as $hId) {
+                         $hId = (int)$hId;
+                         if ($hId > 0) {
+                             $upd = mysqli_prepare($conn, "UPDATE hostels SET owner_id = ? WHERE id = ?");
+                             mysqli_stmt_bind_param($upd, 'ii', $id, $hId);
+                             mysqli_stmt_execute($upd);
+                             mysqli_stmt_close($upd);
+                         }
+                     }
+                }
+                
                 echo json_encode([
                     'success' => true,
                     'id' => (int)$id,
@@ -648,6 +661,29 @@ function handleUsers($method, $conn) {
                 mysqli_stmt_bind_param($stmt, 'issi', $roleId, $userType, $permJson, $id);
                 mysqli_stmt_execute($stmt);
                 mysqli_stmt_close($stmt);
+                
+                if (isset($data['assigned_hostel_ids']) && is_array($data['assigned_hostel_ids'])) {
+                    $adminId = 1;
+                    $adminRes = mysqli_query($conn, "SELECT id FROM users WHERE user_type = 'admin' ORDER BY id ASC LIMIT 1");
+                    if ($adminRes && $row = mysqli_fetch_assoc($adminRes)) {
+                        $adminId = (int)$row['id'];
+                    }
+                    
+                    $upd1 = mysqli_prepare($conn, "UPDATE hostels SET owner_id = ? WHERE owner_id = ?");
+                    mysqli_stmt_bind_param($upd1, 'ii', $adminId, $id);
+                    mysqli_stmt_execute($upd1);
+                    mysqli_stmt_close($upd1);
+                    
+                    foreach ($data['assigned_hostel_ids'] as $hId) {
+                        $hId = (int)$hId;
+                        if ($hId > 0) {
+                            $upd = mysqli_prepare($conn, "UPDATE hostels SET owner_id = ? WHERE id = ?");
+                            mysqli_stmt_bind_param($upd, 'ii', $id, $hId);
+                            mysqli_stmt_execute($upd);
+                            mysqli_stmt_close($upd);
+                        }
+                    }
+                }
             }
             echo json_encode(['success' => true]);
             break;
