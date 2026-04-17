@@ -286,7 +286,17 @@ $permLabels = [
                                 <td><small class="text-muted"><?php echo htmlspecialchars($assigned_names ?: 'None'); ?></small></td>
                                 <td><small class="text-muted"><?php echo htmlspecialchars($psum ?: 'none'); ?></small></td>
                                 <td class="text-end">
-                                    <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#edit<?php echo (int) $o['id']; ?>">Edit</button>
+                                    <div class="d-inline-flex gap-1">
+                                        <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#edit<?php echo (int) $o['id']; ?>">
+                                            <i class="bi bi-pencil"></i> <span class="d-none d-sm-inline ms-1">Edit</span>
+                                        </button>
+                                        <form method="post" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this owner account? Hostels must be reassigned first.');">
+                                            <input type="hidden" name="user_id" value="<?php echo (int) $o['id']; ?>">
+                                            <button type="submit" name="delete_owner" class="btn btn-sm btn-danger">
+                                                <i class="bi bi-trash"></i> <span class="d-none d-sm-inline ms-1">Delete</span>
+                                            </button>
+                                        </form>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
