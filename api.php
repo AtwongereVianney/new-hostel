@@ -692,6 +692,36 @@ function handleUsers($method, $conn) {
             echo json_encode(['success' => true]);
             break;
 
+        case 'DELETE':
+            $data = json_decode(file_get_contents('php://input'), true);
+            $id = (int)($data['id'] ?? 0);
+            if ($id <= 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid id']);
+                return;
+            }
+            // Reassign hostels to admin before deleting
+            $adminId = 1;
+            $adminRes = mysqli_query($conn, "SELECT id FROM users WHERE user_type = 'admin' ORDER BY id ASC LIMIT 1");
+            if ($adminRes && $row = mysqli_fetch_assoc($adminRes)) {
+                $adminId = (int)$row['id'];
+            }
+            $upd = mysqli_prepare($conn, "UPDATE hostels SET owner_id = ? WHERE owner_id = ? AND deleted_at IS NULL");
+            mysqli_stmt_bind_param($upd, 'ii', $adminId, $id);
+            mysqli_stmt_execute($upd);
+            mysqli_stmt_close($upd);
+
+            $stmt = mysqli_prepare($conn, "UPDATE users SET deleted_at = NOW() WHERE id = ?");
+            mysqli_stmt_bind_param($stmt, 'i', $id);
+            if (mysqli_stmt_execute($stmt)) {
+                echo json_encode(['success' => true]);
+            } else {
+                http_response_code(500);
+                echo json_encode(['error' => 'Could not delete user']);
+            }
+            mysqli_stmt_close($stmt);
+            break;
+
         default:
             http_response_code(405);
             echo json_encode(['error' => 'Method not allowed']);
