@@ -1,6 +1,7 @@
 <?php
 require_once '../../config/db.php';
 require_once '../../includes/auth.php';
+require_once '../../includes/mailer.php';
 auth_require_admin();
 
 $defaults = auth_default_owner_permissions();
@@ -23,6 +24,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $phone = trim($_POST['phone'] ?? '');
         $password = $_POST['password'] ?? '';
         $perms = mh_collect_permissions($defaults);
+        
+        if ($password === '') {
+            $password = 'MMU' . rand(1000, 9999) . '!';
+        }
 
         if (!$name || !$email || strlen($password) < 6) {
             $error = 'Name, email, and password (min 6 characters) are required.';
@@ -54,6 +59,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         if (!empty($ids_csv)) {
                             mysqli_query($conn, "UPDATE hostels SET owner_id = $new_user_id WHERE id IN ($ids_csv)");
                         }
+                    }
+                    
+                    $mailRes = mmu_send_manager_credentials_email($email, $name, 'Hostel Owner', $password);
+                    if (empty($mailRes['success'])) {
+                        $error = 'Account created, but failed to send credentials email: ' . ($mailRes['error'] ?? 'Unknown error');
+                    } else {
+                        $message .= ' Credentials have been emailed to the owner.';
                     }
                 } else {
                     $error = 'Could not create account.';
@@ -212,7 +224,8 @@ $permLabels = [
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Password</label>
-                        <input type="password" name="password" class="form-control" required minlength="6">
+                        <input type="password" name="password" class="form-control" minlength="6" placeholder="Leave blank to auto-generate">
+                        <div class="text-muted small mt-1">If blank, a random password will be emailed.</div>
                     </div>
                     <div class="col-12">
                         <label class="form-label d-block">Permissions</label>

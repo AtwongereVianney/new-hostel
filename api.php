@@ -602,11 +602,15 @@ function handleUsers($method, $conn) {
                          }
                      }
                 }
+                $mailRes = mmu_send_manager_credentials_email($email, $name, $role, $password);
+                $mailSent = !empty($mailRes['success']);
                 
                 echo json_encode([
                     'success' => true,
                     'id' => (int)$id,
                     'temporary_password' => ($data['password'] ?? '') === '' ? $password : null,
+                    'email_sent' => $mailSent,
+                    'email_error' => $mailSent ? null : ($mailRes['error'] ?? 'Unknown PHPMailer error'),
                 ]);
             } else {
                 http_response_code(500);
