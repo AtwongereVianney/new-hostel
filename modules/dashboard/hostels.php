@@ -31,6 +31,15 @@ if (isset($_POST['add_hostel'])) {
     $hostel_address = trim($_POST['hostel_address']);
     $hostel_description = trim($_POST['hostel_description']);
     $owner_id = intval($_POST['owner_id'] ?? 1);
+    $gender = trim($_POST['gender'] ?? 'Mixed');
+    $distance = trim($_POST['distance'] ?? '');
+    $manager_phone = trim($_POST['manager_phone'] ?? '');
+    $rating = isset($_POST['rating']) && $_POST['rating'] !== '' ? floatval($_POST['rating']) : null;
+    $location_lat = trim($_POST['location_lat'] ?? '');
+    $location_lng = trim($_POST['location_lng'] ?? '');
+    $amenities_arr = array_map('trim', explode(',', $_POST['amenities'] ?? 'Security,Water'));
+    $amenities_json = json_encode(array_values(array_filter($amenities_arr)));
+
     $image_path = null;
     
     if (isset($_FILES['hostel_image']) && $_FILES['hostel_image']['error'] === UPLOAD_ERR_OK) {
@@ -51,8 +60,8 @@ if (isset($_POST['add_hostel'])) {
     }
     
     if ($business_id && $branch_id && $hostel_name) {
-        $stmt = mysqli_prepare($conn, "INSERT INTO hostels (business_id, branch_id, owner_id, name, address, description) VALUES (?, ?, ?, ?, ?, ?)");
-        mysqli_stmt_bind_param($stmt, 'iiisss', $business_id, $branch_id, $owner_id, $hostel_name, $hostel_address, $hostel_description);
+        $stmt = mysqli_prepare($conn, "INSERT INTO hostels (business_id, branch_id, owner_id, name, address, description, gender, distance, manager_phone, rating, location_lat, location_lng, amenities_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        mysqli_stmt_bind_param($stmt, 'iiissssssdsss', $business_id, $branch_id, $owner_id, $hostel_name, $hostel_address, $hostel_description, $gender, $distance, $manager_phone, $rating, $location_lat, $location_lng, $amenities_json);
         mysqli_stmt_execute($stmt);
         $hostel_id = mysqli_insert_id($conn);
         mysqli_stmt_close($stmt);
@@ -74,6 +83,16 @@ if (isset($_POST['edit_hostel'])) {
     $hostel_name = trim($_POST['hostel_name']);
     $hostel_address = trim($_POST['hostel_address']);
     $hostel_description = trim($_POST['hostel_description']);
+    
+    $gender = trim($_POST['gender'] ?? 'Mixed');
+    $distance = trim($_POST['distance'] ?? '');
+    $manager_phone = trim($_POST['manager_phone'] ?? '');
+    $rating = isset($_POST['rating']) && $_POST['rating'] !== '' ? floatval($_POST['rating']) : null;
+    $location_lat = trim($_POST['location_lat'] ?? '');
+    $location_lng = trim($_POST['location_lng'] ?? '');
+    $amenities_arr = array_map('trim', explode(',', $_POST['amenities'] ?? 'Security,Water'));
+    $amenities_json = json_encode(array_values(array_filter($amenities_arr)));
+    
     $image_path = null;
     
     if (isset($_FILES['hostel_image']) && $_FILES['hostel_image']['error'] === UPLOAD_ERR_OK) {
@@ -95,8 +114,8 @@ if (isset($_POST['edit_hostel'])) {
     
     $owner_id = intval($_POST['owner_id'] ?? 1);
     if ($hostel_id && $hostel_name) {
-        $stmt = mysqli_prepare($conn, "UPDATE hostels SET name = ?, address = ?, description = ?, owner_id = ? WHERE id = ?");
-        mysqli_stmt_bind_param($stmt, 'sssii', $hostel_name, $hostel_address, $hostel_description, $owner_id, $hostel_id);
+        $stmt = mysqli_prepare($conn, "UPDATE hostels SET name = ?, address = ?, description = ?, owner_id = ?, gender = ?, distance = ?, manager_phone = ?, rating = ?, location_lat = ?, location_lng = ?, amenities_json = ? WHERE id = ?");
+        mysqli_stmt_bind_param($stmt, 'sssissssdssi', $hostel_name, $hostel_address, $hostel_description, $owner_id, $gender, $distance, $manager_phone, $rating, $location_lat, $location_lng, $amenities_json, $hostel_id);
         mysqli_stmt_execute($stmt);
         mysqli_stmt_close($stmt);
         
@@ -375,7 +394,19 @@ while ($owners_result && ($ou = mysqli_fetch_assoc($owners_result))) {
                             <p class="mb-1"><strong>Business:</strong> <?= htmlspecialchars($hostel['business_name']) ?></p>
                             <p class="mb-1"><strong>Branch:</strong> <?= htmlspecialchars($hostel['branch_name']) ?></p>
                             <p class="mb-1"><strong>Address:</strong> <?= htmlspecialchars($hostel['address']) ?></p>
-                            <p class="mb-0"><strong>Description:</strong> <?= htmlspecialchars($hostel['description']) ?></p>
+                            <p class="mb-1"><strong>Description:</strong> <?= htmlspecialchars($hostel['description']) ?></p>
+                            <hr class="my-2">
+                            <p class="mb-1"><strong>Gender:</strong> <?= htmlspecialchars($hostel['gender'] ?? 'Mixed') ?></p>
+                            <p class="mb-1"><strong>Distance:</strong> <?= htmlspecialchars((string)($hostel['distance'] ?? '—')) ?></p>
+                            <p class="mb-1"><strong>Manager Phone:</strong> <?= htmlspecialchars((string)($hostel['manager_phone'] ?? '—')) ?></p>
+                            <p class="mb-1"><strong>Rating:</strong> <?= htmlspecialchars((string)($hostel['rating'] ?? 'N/A')) ?> / 5.0</p>
+                            <p class="mb-1"><strong>Amenities:</strong> 
+                                <?php 
+                                    $arr = json_decode($hostel['amenities_json'] ?? '[]', true);
+                                    if(!is_array($arr)) $arr = [];
+                                    echo htmlspecialchars(implode(', ', $arr) ?: 'None');
+                                ?>
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -420,6 +451,46 @@ while ($owners_result && ($ou = mysqli_fetch_assoc($owners_result))) {
                               <div class="mb-3">
                                 <label for="hostel_description_edit<?= $hostel['id'] ?>" class="form-label">Description</label>
                                 <textarea class="form-control" id="hostel_description_edit<?= $hostel['id'] ?>" name="hostel_description"><?= htmlspecialchars($hostel['description']) ?></textarea>
+                              </div>
+                              <div class="row">
+                                <?php $curGender = $hostel['gender'] ?? 'Mixed'; ?>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Gender</label>
+                                    <select class="form-select" name="gender">
+                                        <option value="Mixed" <?= $curGender === 'Mixed' ? 'selected' : '' ?>>Mixed</option>
+                                        <option value="Male" <?= $curGender === 'Male' ? 'selected' : '' ?>>Male</option>
+                                        <option value="Female" <?= $curGender === 'Female' ? 'selected' : '' ?>>Female</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Distance</label>
+                                    <input type="text" class="form-control" name="distance" value="<?= htmlspecialchars($hostel['distance'] ?? '') ?>" placeholder="e.g. 5 mins walk">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Manager Phone</label>
+                                    <input type="text" class="form-control" name="manager_phone" value="<?= htmlspecialchars($hostel['manager_phone'] ?? '') ?>">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Rating (0-5)</label>
+                                    <input type="number" step="0.1" max="5" min="0" class="form-control" name="rating" value="<?= htmlspecialchars($hostel['rating'] ?? '') ?>" placeholder="0.0">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Latitude</label>
+                                    <input type="text" class="form-control" name="location_lat" value="<?= htmlspecialchars($hostel['location_lat'] ?? '') ?>" placeholder="0.6591">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Longitude</label>
+                                    <input type="text" class="form-control" name="location_lng" value="<?= htmlspecialchars($hostel['location_lng'] ?? '') ?>" placeholder="30.2752">
+                                </div>
+                                <div class="col-12 mb-3">
+                                    <label class="form-label">Amenities</label>
+                                    <?php 
+                                        $arr = json_decode($hostel['amenities_json'] ?? '[]', true); 
+                                        if(!is_array($arr)) $arr = [];
+                                        $amenStr = implode(', ', $arr);
+                                    ?>
+                                    <input type="text" class="form-control" name="amenities" value="<?= htmlspecialchars($amenStr) ?>" placeholder="e.g. Security,Water,WiFi (Comma separated)">
+                                </div>
                               </div>
                               <div class="mb-3">
                                 <label for="hostel_image_edit<?= $hostel['id'] ?>" class="form-label">Change Image (optional)</label>
@@ -504,6 +575,40 @@ while ($owners_result && ($ou = mysqli_fetch_assoc($owners_result))) {
                       <div class="mb-3">
                         <label for="hostel_description" class="form-label">Description</label>
                         <textarea class="form-control" id="hostel_description" name="hostel_description"></textarea>
+                      </div>
+                      <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="gender" class="form-label">Gender</label>
+                            <select class="form-select" id="gender" name="gender">
+                                <option value="Mixed">Mixed</option>
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="distance" class="form-label">Distance</label>
+                            <input type="text" class="form-control" id="distance" name="distance" placeholder="e.g. 5 mins walk">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="manager_phone" class="form-label">Manager Phone</label>
+                            <input type="text" class="form-control" id="manager_phone" name="manager_phone">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="rating" class="form-label">Rating (0-5)</label>
+                            <input type="number" step="0.1" max="5" min="0" class="form-control" id="rating" name="rating" placeholder="0.0">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="location_lat" class="form-label">Latitude</label>
+                            <input type="text" class="form-control" id="location_lat" name="location_lat" placeholder="0.6591">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="location_lng" class="form-label">Longitude</label>
+                            <input type="text" class="form-control" id="location_lng" name="location_lng" placeholder="30.2752">
+                        </div>
+                        <div class="col-12 mb-3">
+                            <label class="form-label">Amenities</label>
+                            <input type="text" class="form-control" name="amenities" placeholder="e.g. Security,Water,WiFi (Comma separated)">
+                        </div>
                       </div>
                       <div class="mb-3">
                         <label for="hostel_image" class="form-label">Hostel Image</label>
