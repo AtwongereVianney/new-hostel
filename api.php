@@ -633,12 +633,38 @@ function handleUsers($method, $conn) {
             $status = trim((string)($data['status'] ?? ''));
             $hasStatus = in_array($status, ['active', 'suspended'], true);
             $hasAccessUpdate = array_key_exists('role_id', $data) || array_key_exists('permissions', $data) || array_key_exists('user_type', $data);
+            $hasProfileUpdate = array_key_exists('name', $data) || array_key_exists('email', $data) || array_key_exists('phone', $data) || array_key_exists('password', $data);
 
-            if (!$hasStatus && !$hasAccessUpdate) {
+            if (!$hasStatus && !$hasAccessUpdate && !$hasProfileUpdate) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Nothing to update']);
                 return;
             }
+
+            // Profile updates (name, email, phone, password)
+            if ($hasProfileUpdate) {
+                $fields = []; $types = ''; $vals = [];
+                if (array_key_exists('name', $data) && trim($data['name']) !== '') {
+                    $fields[] = 'name = ?'; $types .= 's'; $vals[] = trim($data['name']);
+                }
+                if (array_key_exists('email', $data) && trim($data['email']) !== '') {
+                    $fields[] = 'email = ?'; $types .= 's'; $vals[] = trim($data['email']);
+                }
+                if (array_key_exists('phone', $data)) {
+                    $fields[] = 'phone = ?'; $types .= 's'; $vals[] = trim($data['phone'] ?? '');
+                }
+                if (!empty($data['password']) && strlen($data['password']) >= 6) {
+                    $fields[] = 'password = ?'; $types .= 's'; $vals[] = password_hash($data['password'], PASSWORD_DEFAULT);
+                }
+                if (!empty($fields)) {
+                    $types .= 'i'; $vals[] = $id;
+                    $stmt = mysqli_prepare($conn, 'UPDATE users SET ' . implode(', ', $fields) . ' WHERE id = ?');
+                    mysqli_stmt_bind_param($stmt, $types, ...$vals);
+                    mysqli_stmt_execute($stmt);
+                    mysqli_stmt_close($stmt);
+                }
+            }
+
 
             if ($hasStatus) {
                 if ($status === 'active') {
