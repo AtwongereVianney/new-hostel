@@ -38,6 +38,9 @@ switch ($endpoint) {
     case 'bookings':
         handleBookings($method, $conn);
         break;
+    case 'rooms':
+        handleRooms($method, $conn);
+        break;
     case 'users':
         handleUsers($method, $conn);
         break;
@@ -89,7 +92,7 @@ function handleLogin($method, $conn) {
                r.name AS role_name
         FROM users u
         LEFT JOIN roles r ON u.role_id = r.id
-        WHERE u.email = ?
+        WHERE u.email = ? AND u.deleted_at IS NULL
         LIMIT 1
     ");
     mysqli_stmt_bind_param($stmt, 's', $email);
@@ -293,6 +296,82 @@ function mmu_save_room_image_upload($conn, $roomId, $uploadPayload) {
     return $relPath;
 }
 
+/**
+ * Decode base64 hostel image from JSON sync, validate, store under assets/images/hostels/, link in hostel_images.
+ * @param array $uploadPayload ['base64' => string, 'filename' => string]
+ * @return ?string Relative path e.g. assets/images/hostels/hostel_xxx.jpg or null on failure
+ */
+function mmu_save_hostel_image_upload($conn, $hostelId, $uploadPayload) {
+    $hostelId = (int)$hostelId;
+    if ($hostelId <= 0 || !is_array($uploadPayload)) {
+        return null;
+    }
+    $raw = trim((string)($uploadPayload['base64'] ?? ''));
+    if ($raw === '') {
+        return null;
+    }
+    // Handle data URL prefix if present
+    if (preg_match('/^data:image\/[\w+]+;base64,(.+)$/i', $raw, $m)) {
+        $raw = $m[1];
+    }
+    $raw = preg_replace('/\s+/', '', $raw);
+    $bin = base64_decode($raw, true);
+    if ($bin === false || strlen($bin) < 32) {
+        return null;
+    }
+    if (strlen($bin) > 5 * 1024 * 1024) { // 5MB limit for hostels
+        return null;
+    }
+    $info = @getimagesizefromstring($bin);
+    if ($info === false) {
+        return null;
+    }
+    $mime = $info['mime'] ?? '';
+    $extMap = [
+        'image/jpeg' => 'jpg',
+        'image/png'  => 'png',
+        'image/gif'  => 'gif',
+        'image/webp' => 'webp',
+    ];
+    $ext = $extMap[$mime] ?? null;
+    if ($ext === null) {
+        return null;
+    }
+
+    $filename = preg_replace('/[^a-zA-Z0-9._\-]/', '', (string)($uploadPayload['filename'] ?? 'hostel.jpg'));
+    $fnExt = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    if (!in_array($fnExt, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true)) {
+        $filename = 'hostel.' . $ext;
+    }
+
+    $safeName = 'hostel_' . uniqid('', true) . '.' . $ext;
+    $relPath = 'assets/images/hostels/' . $safeName;
+    $fullPath = __DIR__ . '/' . $relPath;
+    $dir = dirname($fullPath);
+    if (!is_dir($dir)) {
+        if (!mkdir($dir, 0755, true) && !is_dir($dir)) {
+            return null;
+        }
+    }
+    if (file_put_contents($fullPath, $bin) === false) {
+        return null;
+    }
+
+    // Soft delete old images for this hostel
+    $stmt = mysqli_prepare($conn, "UPDATE hostel_images SET deleted_at = NOW() WHERE hostel_id = ? AND deleted_at IS NULL");
+    mysqli_stmt_bind_param($stmt, 'i', $hostelId);
+    mysqli_stmt_execute($stmt);
+    mysqli_stmt_close($stmt);
+
+    // Insert new image
+    $stmt = mysqli_prepare($conn, "INSERT INTO hostel_images (hostel_id, image_path) VALUES (?, ?)");
+    mysqli_stmt_bind_param($stmt, 'is', $hostelId, $relPath);
+    mysqli_stmt_execute($stmt);
+    mysqli_stmt_close($stmt);
+
+    return $relPath;
+}
+
 function handleRoles($method, $conn) {
     switch ($method) {
         case 'GET':
@@ -333,12 +412,31 @@ function handleRoles($method, $conn) {
             }
             mysqli_stmt_close($stmt);
             break;
+        case 'DELETE':
+            $data = json_decode(file_get_contents('php://input'), true);
+            $id = (int)($data['id'] ?? 0);
+            if ($id <= 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid id']);
+                return;
+            }
+            $stmt = mysqli_prepare($conn, "UPDATE roles SET deleted_at = NOW() WHERE id = ?");
+            mysqli_stmt_bind_param($stmt, 'i', $id);
+            if (mysqli_stmt_execute($stmt)) {
+                echo json_encode(['success' => true]);
+            } else {
+                http_response_code(500);
+                echo json_encode(['error' => 'Could not delete role']);
+            }
+            mysqli_stmt_close($stmt);
+            break;
         default:
             http_response_code(405);
             echo json_encode(['error' => 'Method not allowed']);
             break;
     }
 }
+
 
 function handlePermissions($method, $conn) {
     switch ($method) {
@@ -440,6 +538,48 @@ function handlePermissions($method, $conn) {
             }
             mysqli_stmt_close($stmt);
             break;
+        case 'DELETE':
+            $data = json_decode(file_get_contents('php://input'), true);
+            $id = (int)($data['id'] ?? 0);
+            if ($id <= 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid id']);
+                return;
+            }
+            $stmt = mysqli_prepare($conn, "UPDATE permissions SET deleted_at = NOW() WHERE id = ?");
+            mysqli_stmt_bind_param($stmt, 'i', $id);
+            if (mysqli_stmt_execute($stmt)) {
+                echo json_encode(['success' => true]);
+            } else {
+                http_response_code(500);
+                echo json_encode(['error' => 'Could not delete permission']);
+            }
+            mysqli_stmt_close($stmt);
+            break;
+        default:
+            http_response_code(405);
+            echo json_encode(['error' => 'Method not allowed']);
+            break;
+    }
+}
+
+function handleRooms($method, $conn) {
+    switch ($method) {
+        case 'DELETE':
+            $data = json_decode(file_get_contents('php://input'), true);
+            $id = (int)($data['id'] ?? 0);
+            if ($id <= 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid room id']);
+                return;
+            }
+            // 1. Soft-delete the room
+            mysqli_query($conn, "UPDATE rooms SET deleted_at = NOW() WHERE id = $id");
+            // 2. Soft-delete room images
+            mysqli_query($conn, "UPDATE room_images SET deleted_at = NOW() WHERE room_id = $id");
+
+            echo json_encode(['success' => true]);
+            break;
         default:
             http_response_code(405);
             echo json_encode(['error' => 'Method not allowed']);
@@ -457,7 +597,7 @@ function handleUsers($method, $conn) {
                            r.name AS role_name
                     FROM users u
                     LEFT JOIN roles r ON u.role_id = r.id
-                    WHERE u.id = ?
+                    WHERE u.id = ? AND u.deleted_at IS NULL
                     LIMIT 1
                 ");
                 mysqli_stmt_bind_param($stmt, 'i', $id);
@@ -509,7 +649,7 @@ function handleUsers($method, $conn) {
                        r.name AS role_name
                 FROM users u
                 LEFT JOIN roles r ON u.role_id = r.id
-                WHERE {$whereRole}
+                WHERE {$whereRole} AND u.deleted_at IS NULL
                 ORDER BY u.created_at DESC
             ");
 
@@ -694,7 +834,7 @@ function handleUsers($method, $conn) {
                 
                 if (isset($data['assigned_hostel_ids']) && is_array($data['assigned_hostel_ids'])) {
                     $adminId = 1;
-                    $adminRes = mysqli_query($conn, "SELECT id FROM users WHERE user_type = 'admin' ORDER BY id ASC LIMIT 1");
+                    $adminRes = mysqli_query($conn, "SELECT id FROM users WHERE user_type = 'admin' AND deleted_at IS NULL ORDER BY id ASC LIMIT 1");
                     if ($adminRes && $row = mysqli_fetch_assoc($adminRes)) {
                         $adminId = (int)$row['id'];
                     }
@@ -728,7 +868,7 @@ function handleUsers($method, $conn) {
             }
             // Reassign hostels to admin before deleting
             $adminId = 1;
-            $adminRes = mysqli_query($conn, "SELECT id FROM users WHERE user_type = 'admin' ORDER BY id ASC LIMIT 1");
+            $adminRes = mysqli_query($conn, "SELECT id FROM users WHERE user_type = 'admin' AND deleted_at IS NULL ORDER BY id ASC LIMIT 1");
             if ($adminRes && $row = mysqli_fetch_assoc($adminRes)) {
                 $adminId = (int)$row['id'];
             }
@@ -762,7 +902,7 @@ function handleHostels($method, $conn) {
             $result = mysqli_query($conn, "
                 SELECT h.*, hi.image_path, u.phone AS owner_phone
                 FROM hostels h
-                LEFT JOIN hostel_images hi ON h.id = hi.hostel_id
+                LEFT JOIN hostel_images hi ON h.id = hi.hostel_id AND hi.deleted_at IS NULL
                 LEFT JOIN users u ON h.owner_id = u.id
                 WHERE h.deleted_at IS NULL
                 ORDER BY h.id DESC
@@ -903,7 +1043,20 @@ function handleHostels($method, $conn) {
             if (mysqli_stmt_execute($stmt)) {
                 $hostelId = ($hostelId !== null && $hostelId > 0) ? $hostelId : mysqli_insert_id($conn);
 
-                // Handle images if provided
+                // Handle image removal if requested
+                if (!empty($data['delete_images'])) {
+                    $delStmt = mysqli_prepare($conn, "UPDATE hostel_images SET deleted_at = NOW() WHERE hostel_id = ? AND deleted_at IS NULL");
+                    mysqli_stmt_bind_param($delStmt, 'i', $hostelId);
+                    mysqli_stmt_execute($delStmt);
+                    mysqli_stmt_close($delStmt);
+                }
+
+                // Handle base64 image upload if provided
+                if ($hostelId > 0 && !empty($data['image_upload']) && is_array($data['image_upload'])) {
+                    mmu_save_hostel_image_upload($conn, $hostelId, $data['image_upload']);
+                }
+
+                // Handle existing image paths if provided
                 if (isset($data['images']) && is_array($data['images'])) {
                     foreach ($data['images'] as $imagePath) {
                         $imgStmt = mysqli_prepare($conn, "INSERT INTO hostel_images (hostel_id, image_path) VALUES (?, ?)");
@@ -1001,7 +1154,25 @@ function handleHostels($method, $conn) {
             }
             mysqli_stmt_close($stmt);
             break;
+        case 'DELETE':
+            $data = json_decode(file_get_contents('php://input'), true);
+            $hostelId = (int)($data['id'] ?? 0);
+            if ($hostelId <= 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid hostel id']);
+                return;
+            }
+            // 1. Soft-delete the hostel
+            mysqli_query($conn, "UPDATE hostels SET deleted_at = NOW() WHERE id = $hostelId");
+            // 2. Soft-delete child rooms
+            mysqli_query($conn, "UPDATE rooms SET deleted_at = NOW() WHERE hostel_id = $hostelId");
+            // 3. Soft-delete room images (via rooms belonging to the hostel)
+            mysqli_query($conn, "UPDATE room_images SET deleted_at = NOW() WHERE room_id IN (SELECT id FROM rooms WHERE hostel_id = $hostelId)");
+            // 4. Soft-delete hostel images
+            mysqli_query($conn, "UPDATE hostel_images SET deleted_at = NOW() WHERE hostel_id = $hostelId");
 
+            echo json_encode(['success' => true]);
+            break;
         default:
             http_response_code(405);
             echo json_encode(['error' => 'Method not allowed']);
@@ -1081,7 +1252,7 @@ function handleBookings($method, $conn) {
             }
 
             if ($studentEmail) {
-                $userResult = mysqli_query($conn, "SELECT id FROM users WHERE email = '" . mysqli_real_escape_string($conn, $studentEmail) . "' LIMIT 1");
+                $userResult = mysqli_query($conn, "SELECT id FROM users WHERE email = '" . mysqli_real_escape_string($conn, $studentEmail) . "' AND deleted_at IS NULL LIMIT 1");
                 if ($userRow = mysqli_fetch_assoc($userResult)) {
                     $userId = $userRow['id'];
                 }
@@ -1186,7 +1357,24 @@ function handleBookings($method, $conn) {
 
             echo json_encode(['id' => (int)$bookingId, 'success' => true]);
             break;
-
+        case 'DELETE':
+            $data = json_decode(file_get_contents('php://input'), true);
+            $id = (int)($data['id'] ?? 0);
+            if ($id <= 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid booking id']);
+                return;
+            }
+            $stmt = mysqli_prepare($conn, "UPDATE bookings SET deleted_at = NOW() WHERE id = ?");
+            mysqli_stmt_bind_param($stmt, 'i', $id);
+            if (mysqli_stmt_execute($stmt)) {
+                echo json_encode(['success' => true]);
+            } else {
+                http_response_code(500);
+                echo json_encode(['error' => 'Could not delete booking']);
+            }
+            mysqli_stmt_close($stmt);
+            break;
         default:
             http_response_code(405);
             echo json_encode(['error' => 'Method not allowed']);
