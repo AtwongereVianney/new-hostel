@@ -7,6 +7,7 @@ header('Access-Control-Allow-Headers: Content-Type, Authorization');
 require_once __DIR__ . '/config/db.php';
 require_once __DIR__ . '/includes/mailer.php';
 ensureHostelExtendedColumns($conn);
+ensureSystemSettingsTable($conn);
 
 // IMPORTANT: Replace this with your LIVE Flutterwave Secret Key (FLWSECK-XXXX)
 define('FLW_SECRET_KEY', 'FLWSECK_TEST-sandbox-secret-key-placeholder');
@@ -62,8 +63,11 @@ switch ($endpoint) {
     case 'booking-approval':
         handleBookingApproval($method, $conn);
         break;
+    case 'settings':
+        handleSettings($method, $conn);
+        break;
     case '':
-        echo json_encode(['status' => 'API is running', 'endpoints' => ['hostels', 'bookings', 'users', 'roles', 'permissions', 'login', 'booking-approval', 'pay', 'verify-payment']]);
+        echo json_encode(['status' => 'API is running', 'endpoints' => ['hostels', 'bookings', 'users', 'roles', 'permissions', 'login', 'booking-approval', 'pay', 'verify-payment', 'settings']]);
         break;
     default:
         http_response_code(404);
@@ -1477,5 +1481,47 @@ function handlePaymentVerification($method, $conn) {
             echo json_encode(['status' => 'pending']);
         }
     }
+}
+
+function ensureSystemSettingsTable($conn) {
+    mysqli_query($conn, "
+        CREATE TABLE IF NOT EXISTS system_settings (
+            setting_key VARCHAR(100) PRIMARY KEY,
+            setting_value TEXT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+    ");
+}
+
+function handleSettings($method, $conn) {
+    if ($method === 'GET') {
+        $res = mysqli_query($conn, "SELECT setting_key, setting_value FROM system_settings");
+        $settings = [];
+        while ($res && ($row = mysqli_fetch_assoc($res))) {
+            $settings[$row['setting_key']] = $row['setting_value'];
+        }
+        echo json_encode(['success' => true, 'settings' => $settings]);
+        return;
+    }
+
+    if ($method === 'POST' || $method === 'PUT') {
+        $data = json_decode(file_get_contents('php://input'), true);
+        if (!is_array($data)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Invalid data payload']);
+            return;
+        }
+
+        foreach ($data as $key => $value) {
+            $k = mysqli_real_escape_string($conn, $key);
+            $v = mysqli_real_escape_string($conn, (string)$value);
+            mysqli_query($conn, "INSERT INTO system_settings (setting_key, setting_value) VALUES ('$k', '$v') ON DUPLICATE KEY UPDATE setting_value = '$v'");
+        }
+        echo json_encode(['success' => true]);
+        return;
+    }
+
+    http_response_code(405);
+    echo json_encode(['error' => 'Method not allowed for settings endpoint']);
 }
 ?>
