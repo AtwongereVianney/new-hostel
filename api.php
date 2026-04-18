@@ -88,7 +88,7 @@ function handleLogin($method, $conn) {
     }
 
     $stmt = mysqli_prepare($conn, "
-        SELECT u.id, u.name, u.email, u.password, u.user_type, u.role_id, u.permissions_json, u.deleted_at,
+        SELECT u.id, u.name, u.email, u.phone, u.password, u.user_type, u.role_id, u.permissions_json, u.deleted_at,
                r.name AS role_name
         FROM users u
         LEFT JOIN roles r ON u.role_id = r.id
@@ -130,6 +130,7 @@ function handleLogin($method, $conn) {
             'id' => (int)$user['id'],
             'name' => $user['name'] ?? '',
             'email' => $user['email'] ?? '',
+            'phone' => $user['phone'] ?? '',
             'user_type' => $user['user_type'] ?? 'student',
             'role_id' => isset($user['role_id']) ? (int)$user['role_id'] : null,
             'role_name' => $user['role_name'] ?? '',
