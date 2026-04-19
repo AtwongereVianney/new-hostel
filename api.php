@@ -7,6 +7,7 @@ header('Access-Control-Allow-Headers: Content-Type, Authorization');
 require_once __DIR__ . '/config/db.php';
 require_once __DIR__ . '/includes/mailer.php';
 ensureHostelExtendedColumns($conn);
+ensureBookingsExtendedColumns($conn);
 ensureSystemSettingsTable($conn);
 
 // IMPORTANT: Replace this with your LIVE Flutterwave Secret Key (FLWSECK-XXXX)
@@ -66,8 +67,11 @@ switch ($endpoint) {
     case 'settings':
         handleSettings($method, $conn);
         break;
+    case 'support':
+        handleSupportRequest($method, $conn);
+        break;
     case '':
-        echo json_encode(['status' => 'API is running', 'endpoints' => ['hostels', 'bookings', 'users', 'roles', 'permissions', 'login', 'booking-approval', 'pay', 'verify-payment', 'settings']]);
+        echo json_encode(['status' => 'API is running', 'endpoints' => ['hostels', 'bookings', 'users', 'roles', 'permissions', 'login', 'booking-approval', 'pay', 'verify-payment', 'settings', 'support']]);
         break;
     default:
         http_response_code(404);
@@ -209,6 +213,35 @@ function handleBookingApproval($method, $conn) {
     ]);
 }
 
+function handleSupportRequest($method, $conn) {
+    if ($method !== 'POST') {
+        http_response_code(405);
+        echo json_encode(['error' => 'Method not allowed']);
+        return;
+    }
+
+    $data = json_decode(file_get_contents('php://input'), true);
+    $email = trim((string)($data['email'] ?? ''));
+    $name = trim((string)($data['name'] ?? 'User'));
+    $subject = trim((string)($data['subject'] ?? 'No Subject'));
+    $message = trim((string)($data['message'] ?? ''));
+
+    if ($email === '' || $message === '') {
+        http_response_code(400);
+        echo json_encode(['error' => 'Email and message are required']);
+        return;
+    }
+
+    $mailRes = mmu_send_support_ticket_email($email, $name, $subject, $message);
+    $mailSent = !empty($mailRes['success']);
+
+    echo json_encode([
+        'success' => !!$mailSent,
+        'email_sent' => (bool)$mailSent,
+        'error' => $mailSent ? null : ($mailRes['error'] ?? 'Unknown PHPMailer error'),
+    ]);
+}
+
 function ensureHostelExtendedColumns($conn) {
     $needed = [
         "gender VARCHAR(20) NULL",
@@ -225,6 +258,30 @@ function ensureHostelExtendedColumns($conn) {
         if (!$res || mysqli_num_rows($res) === 0) {
             mysqli_query($conn, "ALTER TABLE hostels ADD COLUMN {$colDef}");
         }
+    }
+}
+
+function ensureBookingsExtendedColumns($conn) {
+    $needed = [
+        "reference_no VARCHAR(30) NULL",
+        "reg_no VARCHAR(60) NULL",
+        "course VARCHAR(150) NULL",
+        "semester VARCHAR(50) NULL",
+        "academic_year VARCHAR(30) NULL"
+    ];
+    foreach ($needed as $colDef) {
+        $col = explode(' ', $colDef)[0];
+        $res = mysqli_query($conn, "SHOW COLUMNS FROM bookings LIKE '{$col}'");
+        if (!$res || mysqli_num_rows($res) === 0) {
+            mysqli_query($conn, "ALTER TABLE bookings ADD COLUMN {$colDef}");
+        }
+    }
+    // Ensure UNIQUE index on reference_no if it doesn't exist
+    $res = mysqli_query($conn, "SHOW INDEX FROM bookings WHERE Column_name = 'reference_no'");
+    if ($res && mysqli_num_rows($res) === 0) {
+        // We only add UNIQUE if columns are populated or if table is empty to avoid collisions
+        // For simplicity in this env, we just try to add it.
+        mysqli_query($conn, "ALTER TABLE bookings ADD UNIQUE (reference_no)");
     }
 }
 
@@ -1198,6 +1255,11 @@ function handleBookings($method, $conn) {
                     b.start_date,
                     b.end_date,
                     b.created_at,
+                    b.reference_no,
+                    b.reg_no,
+                    b.course,
+                    b.semester,
+                    b.academic_year,
                     r.hostel_id,
                     r.room_number,
                     h.name AS hostel_name,
@@ -1215,17 +1277,18 @@ function handleBookings($method, $conn) {
             $bookings = [];
             while ($row = mysqli_fetch_assoc($result)) {
                 $bookings[] = [
-                    // Frontend expects these keys
                     'id'          => (int)$row['id'],
+                    'reference_no' => $row['reference_no'] ?: null,
                     'userId'      => isset($row['user_id']) ? (int)$row['user_id'] : null,
                     'hostelId'    => (int)$row['hostel_id'],
                     'roomId'      => (int)$row['room_id'],
                     'studentName' => $row['student_name'] ?: 'Unknown Student',
-                    'regNo'       => '', // Not stored in DB currently
-                    'course'      => '', // Not stored in DB currently
+                    'regNo'       => $row['reg_no'] ?: '', 
+                    'course'      => $row['course'] ?: '',
+                    'semester'    => $row['semester'] ?: '',
+                    'year'        => $row['academic_year'] ?: '',
                     'status'      => $row['status'] ?: 'pending',
                     'date'        => $row['start_date'],
-                    // Extra fields (useful for future UI)
                     'email'       => $row['student_email'] ?: '',
                     'phone'       => $row['student_phone'] ?: '',
                     'hostelName'  => $row['hostel_name'] ?: '',
@@ -1329,24 +1392,36 @@ function handleBookings($method, $conn) {
             if ($found) {
                 $stmt = mysqli_prepare($conn, "
                     UPDATE bookings
-                    SET status = ?, end_date = ?, updated_at = CURRENT_TIMESTAMP
+                    SET status = ?, end_date = ?, reg_no = ?, course = ?, semester = ?, academic_year = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ? AND deleted_at IS NULL
                 ");
-                mysqli_stmt_bind_param($stmt, 'ssi', $status, $checkOut, $existingId);
+                $reg = $data['regNo'] ?? '';
+                $crs = $data['course'] ?? '';
+                $sem = $data['semester'] ?? '';
+                $yr  = $data['year'] ?? '';
+                mysqli_stmt_bind_param($stmt, 'ssssssi', $status, $checkOut, $reg, $crs, $sem, $yr, $existingId);
                 mysqli_stmt_execute($stmt);
                 mysqli_stmt_close($stmt);
                 $bookingId = (int)$existingId;
             } else {
+                // Generate a unique reference number
+                $refNo = 'BK-' . strtoupper(substr(md5(uniqid(rand(), true)), 0, 6));
+                
                 $stmt = mysqli_prepare($conn, "
-                    INSERT INTO bookings (business_id, branch_id, user_id, room_id, status, start_date, end_date)
-                    VALUES (1, 1, ?, ?, ?, ?, ?)
+                    INSERT INTO bookings (business_id, branch_id, user_id, room_id, status, start_date, end_date, reference_no, reg_no, course, semester, academic_year)
+                    VALUES (1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
-                mysqli_stmt_bind_param($stmt, 'iisss', $userId, $roomId, $status, $checkIn, $checkOut);
+                $reg = $data['regNo'] ?? '';
+                $crs = $data['course'] ?? '';
+                $sem = $data['semester'] ?? '';
+                $yr  = $data['year'] ?? '';
+                mysqli_stmt_bind_param($stmt, 'iisssssssss', $userId, $roomId, $status, $checkIn, $checkOut, $refNo, $reg, $crs, $sem, $yr);
+                
                 if (mysqli_stmt_execute($stmt)) {
                     $bookingId = mysqli_insert_id($conn);
                 } else {
                     http_response_code(500);
-                    echo json_encode(['error' => 'Failed to add booking']);
+                    echo json_encode(['error' => 'Failed to add booking', 'db_error' => mysqli_error($conn)]);
                     mysqli_stmt_close($stmt);
                     return;
                 }

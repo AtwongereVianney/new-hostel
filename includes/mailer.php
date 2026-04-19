@@ -131,3 +131,61 @@ function mmu_send_manager_credentials_email(string $toEmail, string $managerName
         return ['success' => false, 'error' => $mail->ErrorInfo ?: $e->getMessage()];
     }
 }
+
+function mmu_send_support_ticket_email(string $fromEmail, string $fromName, string $subject, string $message): array
+{
+    $cfg = require __DIR__ . '/../config/mail.php';
+    if (empty($cfg['enabled'])) {
+        return ['success' => false, 'error' => 'SMTP mailing is disabled in config/mail.php'];
+    }
+
+    $supportEmail = 'devSupport@mmu.ac.ug';
+    $mail = new PHPMailer(true);
+    try {
+        $mail->isSMTP();
+        $mail->Host = (string)$cfg['host'];
+        $mail->SMTPAuth = true;
+        $mail->Username = (string)$cfg['username'];
+        $mail->Password = (string)$cfg['password'];
+        $mail->Port = (int)$cfg['port'];
+
+        $enc = strtolower((string)($cfg['encryption'] ?? 'tls'));
+        if ($enc === 'ssl') {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+        } else {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+        }
+
+        $mail->setFrom((string)$cfg['from_email'], (string)$cfg['from_name']);
+        $mail->addAddress($supportEmail, 'MMU Tech Team');
+        $mail->addReplyTo($fromEmail, $fromName);
+        
+        $mail->isHTML(true);
+        $mail->Subject = "[MMU Support Ticket] {$subject}";
+
+        $safeName = htmlspecialchars($fromName, ENT_QUOTES, 'UTF-8');
+        $safeEmail = htmlspecialchars($fromEmail, ENT_QUOTES, 'UTF-8');
+        $safeSub = htmlspecialchars($subject, ENT_QUOTES, 'UTF-8');
+        $safeMsg = nl2br(htmlspecialchars($message, ENT_QUOTES, 'UTF-8'));
+
+        $mail->Body = "
+            <h3>New Support Ticket</h3>
+            <p><b>From:</b> {$safeName} ({$safeEmail})</p>
+            <p><b>Subject:</b> {$safeSub}</p>
+            <hr/>
+            <p>{$safeMsg}</p>
+            <hr/>
+            <p><small>Sent via MMU Hostel System Help Center</small></p>
+        ";
+        $mail->AltBody =
+            "New Support Ticket\n\n" .
+            "From: {$fromName} ({$fromEmail})\n" .
+            "Subject: {$subject}\n\n" .
+            "Message:\n{$message}";
+
+        $mail->send();
+        return ['success' => true];
+    } catch (Exception $e) {
+        return ['success' => false, 'error' => $mail->ErrorInfo ?: $e->getMessage()];
+    }
+}
