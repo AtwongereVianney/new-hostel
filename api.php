@@ -232,7 +232,11 @@ function handleSupportRequest($method, $conn) {
         return;
     }
 
-    $mailRes = mmu_send_support_ticket_email($email, $name, $subject, $message);
+    $sysEmailRes = mysqli_query($conn, "SELECT setting_value FROM system_settings WHERE setting_key = 'supportEmail'");
+    $sysEmailRow = $sysEmailRes ? mysqli_fetch_assoc($sysEmailRes) : null;
+    $supportEmail = ($sysEmailRow && !empty($sysEmailRow['setting_value'])) ? $sysEmailRow['setting_value'] : 'devSupport@mmu.ac.ug';
+
+    $mailRes = mmu_send_support_ticket_email($email, $name, $subject, $message, $supportEmail);
     $mailSent = !empty($mailRes['success']);
 
     echo json_encode([
@@ -267,7 +271,9 @@ function ensureBookingsExtendedColumns($conn) {
         "reg_no VARCHAR(60) NULL",
         "course VARCHAR(150) NULL",
         "semester VARCHAR(50) NULL",
-        "academic_year VARCHAR(30) NULL"
+        "academic_year VARCHAR(30) NULL",
+        "balance_paid DECIMAL(10,2) DEFAULT 0",
+        "student_phone VARCHAR(50) NULL"
     ];
     foreach ($needed as $colDef) {
         $col = explode(' ', $colDef)[0];
@@ -1260,6 +1266,8 @@ function handleBookings($method, $conn) {
                     b.course,
                     b.semester,
                     b.academic_year,
+                    b.balance_paid,
+                    b.student_phone AS booking_phone,
                     r.hostel_id,
                     r.room_number,
                     h.name AS hostel_name,
@@ -1290,7 +1298,8 @@ function handleBookings($method, $conn) {
                     'status'      => $row['status'] ?: 'pending',
                     'date'        => $row['start_date'],
                     'email'       => $row['student_email'] ?: '',
-                    'phone'       => $row['student_phone'] ?: '',
+                    'phone'       => $row['booking_phone'] ?: ($row['student_phone'] ?: ''),
+                    'balancePaid' => (float)($row['balance_paid'] ?? 0),
                     'hostelName'  => $row['hostel_name'] ?: '',
                     'roomNumber'  => $row['room_number'] ?: '',
                 ];
@@ -1373,33 +1382,51 @@ function handleBookings($method, $conn) {
             $checkIn = (string)($data['date'] ?? $data['check_in'] ?? date('Y-m-d'));
             $checkOut = (string)($data['check_out'] ?? $data['end_date'] ?? date('Y-m-d', strtotime('+1 month', strtotime($checkIn))));
 
-            // Upsert booking by user+room+start_date to keep the DB in sync
-            $up = mysqli_prepare($conn, "
-                SELECT id FROM bookings
-                WHERE business_id = 1 AND branch_id = 1
-                  AND user_id = ?
-                  AND room_id = ?
-                  AND start_date = ?
-                  AND deleted_at IS NULL
-                LIMIT 1
-            ");
-            mysqli_stmt_bind_param($up, 'iis', $userId, $roomId, $checkIn);
-            mysqli_stmt_execute($up);
-            mysqli_stmt_bind_result($up, $existingId);
-            $found = mysqli_stmt_fetch($up);
-            mysqli_stmt_close($up);
+            $existingId = null;
+            $found = false;
+
+            $bookingIdFromClient = isset($data['id']) ? $data['id'] : null;
+
+            if ($bookingIdFromClient && is_numeric($bookingIdFromClient)) {
+                $up = mysqli_prepare($conn, "SELECT id FROM bookings WHERE id = ? AND deleted_at IS NULL LIMIT 1");
+                mysqli_stmt_bind_param($up, 'i', $bookingIdFromClient);
+                mysqli_stmt_execute($up);
+                mysqli_stmt_bind_result($up, $existingId);
+                $found = mysqli_stmt_fetch($up);
+                mysqli_stmt_close($up);
+            }
+
+            if (!$found) {
+                // Fallback to user+room+start_date matching
+                $up = mysqli_prepare($conn, "
+                    SELECT id FROM bookings
+                    WHERE business_id = 1 AND branch_id = 1
+                      AND user_id = ?
+                      AND room_id = ?
+                      AND start_date = ?
+                      AND deleted_at IS NULL
+                    LIMIT 1
+                ");
+                mysqli_stmt_bind_param($up, 'iis', $userId, $roomId, $checkIn);
+                mysqli_stmt_execute($up);
+                mysqli_stmt_bind_result($up, $existingId);
+                $found = mysqli_stmt_fetch($up);
+                mysqli_stmt_close($up);
+            }
 
             if ($found) {
                 $stmt = mysqli_prepare($conn, "
                     UPDATE bookings
-                    SET status = ?, end_date = ?, reg_no = ?, course = ?, semester = ?, academic_year = ?, updated_at = CURRENT_TIMESTAMP
+                    SET status = ?, end_date = ?, reg_no = ?, course = ?, semester = ?, academic_year = ?, balance_paid = ?, student_phone = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ? AND deleted_at IS NULL
                 ");
                 $reg = $data['regNo'] ?? '';
                 $crs = $data['course'] ?? '';
                 $sem = $data['semester'] ?? '';
                 $yr  = $data['year'] ?? '';
-                mysqli_stmt_bind_param($stmt, 'ssssssi', $status, $checkOut, $reg, $crs, $sem, $yr, $existingId);
+                $bal = $data['balancePaid'] ?? 0;
+                $sph = $data['phone'] ?? '';
+                mysqli_stmt_bind_param($stmt, 'ssssssdsi', $status, $checkOut, $reg, $crs, $sem, $yr, $bal, $sph, $existingId);
                 mysqli_stmt_execute($stmt);
                 mysqli_stmt_close($stmt);
                 $bookingId = (int)$existingId;
@@ -1408,14 +1435,16 @@ function handleBookings($method, $conn) {
                 $refNo = 'BK-' . strtoupper(substr(md5(uniqid(rand(), true)), 0, 6));
                 
                 $stmt = mysqli_prepare($conn, "
-                    INSERT INTO bookings (business_id, branch_id, user_id, room_id, status, start_date, end_date, reference_no, reg_no, course, semester, academic_year)
-                    VALUES (1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO bookings (business_id, branch_id, user_id, room_id, status, start_date, end_date, reference_no, reg_no, course, semester, academic_year, balance_paid, student_phone)
+                    VALUES (1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $reg = $data['regNo'] ?? '';
                 $crs = $data['course'] ?? '';
                 $sem = $data['semester'] ?? '';
                 $yr  = $data['year'] ?? '';
-                mysqli_stmt_bind_param($stmt, 'iisssssssss', $userId, $roomId, $status, $checkIn, $checkOut, $refNo, $reg, $crs, $sem, $yr);
+                $bal = $data['balancePaid'] ?? 0;
+                $sph = $data['phone'] ?? '';
+                mysqli_stmt_bind_param($stmt, 'iissssssssds', $userId, $roomId, $status, $checkIn, $checkOut, $refNo, $reg, $crs, $sem, $yr, $bal, $sph);
                 
                 if (mysqli_stmt_execute($stmt)) {
                     $bookingId = mysqli_insert_id($conn);

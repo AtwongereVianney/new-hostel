@@ -132,14 +132,12 @@ function mmu_send_manager_credentials_email(string $toEmail, string $managerName
     }
 }
 
-function mmu_send_support_ticket_email(string $fromEmail, string $fromName, string $subject, string $message): array
+function mmu_send_support_ticket_email(string $fromEmail, string $fromName, string $subject, string $message, string $supportEmail = 'devSupport@mmu.ac.ug'): array
 {
     $cfg = require __DIR__ . '/../config/mail.php';
     if (empty($cfg['enabled'])) {
         return ['success' => false, 'error' => 'SMTP mailing is disabled in config/mail.php'];
     }
-
-    $supportEmail = 'devSupport@mmu.ac.ug';
     $mail = new PHPMailer(true);
     try {
         $mail->isSMTP();
