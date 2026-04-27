@@ -1,13 +1,12 @@
 <?php
 // Database configuration
-$host     = getenv('DB_HOST') ?: 'localhost';
-$user     = getenv('DB_USER') ?: 'root';
-$password = getenv('DB_PASSWORD') ?: '';
-$database = getenv('DB_NAME') ?: 'new_hostel';
-$port     = getenv('DB_PORT') ?: '3306';
+$host = 'localhost';
+$user = 'root';
+$password = '';
+$database = 'new_hostel';
 
 // Create connection
-$conn = mysqli_connect($host, $user, $password, $database, $port);
+$conn = mysqli_connect($host, $user, $password, $database);
 
 // Check connection
 if (!$conn) {
