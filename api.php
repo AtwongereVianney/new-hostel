@@ -70,6 +70,9 @@ switch ($endpoint) {
     case 'support':
         handleSupportRequest($method, $conn);
         break;
+    case 'role-permissions':
+        handleRolePermissions($method, $conn);
+        break;
     case '':
         echo json_encode(['status' => 'API is running', 'endpoints' => ['hostels', 'bookings', 'users', 'roles', 'permissions', 'login', 'booking-approval', 'pay', 'verify-payment', 'settings', 'support']]);
         break;
@@ -923,6 +926,20 @@ function handleUsers($method, $conn) {
                     }
                 }
             }
+
+            if (isset($data['bulk_sync_role_id']) && (int)$data['bulk_sync_role_id'] > 0) {
+                $syncRoleId = (int)$data['bulk_sync_role_id'];
+                $permissions = $data['permissions'] ?? [];
+                $permJson = json_encode($permissions);
+
+                $stmt = mysqli_prepare($conn, "UPDATE users SET permissions_json = ? WHERE role_id = ? AND deleted_at IS NULL");
+                mysqli_stmt_bind_param($stmt, 'si', $permJson, $syncRoleId);
+                mysqli_stmt_execute($stmt);
+                mysqli_stmt_close($stmt);
+                echo json_encode(['success' => true, 'message' => 'Synced permissions to all users in role']);
+                return;
+            }
+
             echo json_encode(['success' => true]);
             break;
 
@@ -1627,5 +1644,69 @@ function handleSettings($method, $conn) {
 
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed for settings endpoint']);
+}
+
+function handleRolePermissions($method, $conn) {
+    $businessId = 1; $branchId = 1;
+    switch ($method) {
+        case 'GET':
+            $roleId = (int)($_GET['role_id'] ?? 0);
+            $permId = (int)($_GET['permission_id'] ?? 0);
+
+            if ($roleId > 0) {
+                $rows = [];
+                $res = mysqli_query($conn, "SELECT p.id, p.name FROM permission_role pr JOIN permissions p ON pr.permission_id = p.id WHERE pr.role_id = {$roleId} AND pr.deleted_at IS NULL AND p.deleted_at IS NULL");
+                while ($res && ($r = mysqli_fetch_assoc($res))) { $rows[] = ['id' => (int)$r['id'], 'name' => $r['name']]; }
+                echo json_encode($rows);
+            } elseif ($permId > 0) {
+                $rows = [];
+                $res = mysqli_query($conn, "SELECT r.id, r.name FROM permission_role pr JOIN roles r ON pr.role_id = r.id WHERE pr.permission_id = {$permId} AND pr.deleted_at IS NULL AND r.deleted_at IS NULL");
+                while ($res && ($r = mysqli_fetch_assoc($res))) { $rows[] = ['id' => (int)$r['id'], 'name' => $r['name']]; }
+                echo json_encode($rows);
+            } else {
+                http_response_code(400); echo json_encode(['error' => 'role_id or permission_id required']);
+            }
+            break;
+
+        case 'POST':
+            $data = json_decode(file_get_contents('php://input'), true);
+            $roleId = (int)($data['role_id'] ?? 0);
+            $permId = (int)($data['permission_id'] ?? 0);
+
+            if ($roleId > 0) {
+                $permIds = $data['permission_ids'] ?? [];
+                mysqli_query($conn, "UPDATE permission_role SET deleted_at = NOW() WHERE role_id = {$roleId} AND deleted_at IS NULL");
+                foreach ($permIds as $pId) {
+                    $pId = (int)$pId;
+                    if ($pId > 0) {
+                        $stmt = mysqli_prepare($conn, "INSERT INTO permission_role (role_id, permission_id, business_id, branch_id) VALUES (?, ?, ?, ?)");
+                        mysqli_stmt_bind_param($stmt, 'iiii', $roleId, $pId, $businessId, $branchId);
+                        mysqli_stmt_execute($stmt);
+                        mysqli_stmt_close($stmt);
+                    }
+                }
+                echo json_encode(['success' => true]);
+            } elseif ($permId > 0) {
+                $roleIds = $data['role_ids'] ?? [];
+                mysqli_query($conn, "UPDATE permission_role SET deleted_at = NOW() WHERE permission_id = {$permId} AND deleted_at IS NULL");
+                foreach ($roleIds as $rId) {
+                    $rId = (int)$rId;
+                    if ($rId > 0) {
+                        $stmt = mysqli_prepare($conn, "INSERT INTO permission_role (role_id, permission_id, business_id, branch_id) VALUES (?, ?, ?, ?)");
+                        mysqli_stmt_bind_param($stmt, 'iiii', $rId, $permId, $businessId, $branchId);
+                        mysqli_stmt_execute($stmt);
+                        mysqli_stmt_close($stmt);
+                    }
+                }
+                echo json_encode(['success' => true]);
+            } else {
+                http_response_code(400); echo json_encode(['error' => 'role_id or permission_id required']);
+            }
+            break;
+
+        default:
+            http_response_code(405); echo json_encode(['error' => 'Method not allowed']);
+            break;
+    }
 }
 ?>
