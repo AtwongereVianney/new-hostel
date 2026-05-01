@@ -1279,7 +1279,7 @@ function handleBookings($method, $conn) {
                 INNER JOIN hostels h ON r.hostel_id = h.id
                 LEFT JOIN users u ON b.user_id = u.id
                 WHERE b.deleted_at IS NULL
-                ORDER BY b.created_at DESC
+                ORDER BY b.start_date DESC, b.created_at DESC
             ");
 
             $bookings = [];
