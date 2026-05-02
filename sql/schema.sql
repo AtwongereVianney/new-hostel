@@ -139,6 +139,7 @@ CREATE TABLE bookings (
     user_id INT NOT NULL,
     room_id INT NOT NULL,
     status VARCHAR(20) DEFAULT 'pending',
+    payment_status VARCHAR(20) DEFAULT 'pending',
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -157,6 +158,8 @@ CREATE TABLE payments (
     branch_id INT NOT NULL,
     booking_id INT NOT NULL,
     amount DECIMAL(10,2) NOT NULL,
+    proof_image_path VARCHAR(255) NULL,
+    verified_by INT NULL,
     payment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
     status VARCHAR(20) DEFAULT 'pending',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -164,7 +167,8 @@ CREATE TABLE payments (
     deleted_at DATETIME DEFAULT NULL,
     FOREIGN KEY (business_id) REFERENCES business(id),
     FOREIGN KEY (branch_id) REFERENCES branch(id),
-    FOREIGN KEY (booking_id) REFERENCES bookings(id)
+    FOREIGN KEY (booking_id) REFERENCES bookings(id),
+    FOREIGN KEY (verified_by) REFERENCES users(id)
 );
 
 -- 12. Allocations Table

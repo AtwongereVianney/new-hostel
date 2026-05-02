@@ -73,8 +73,26 @@ switch ($endpoint) {
     case 'role-permissions':
         handleRolePermissions($method, $conn);
         break;
+    case 'upload-payment-proof':
+        handleUploadPaymentProof($method, $conn);
+        break;
+    case 'verify-payment-manual':
+        handleVerifyPaymentManual($method, $conn);
+        break;
+    case 'dashboard-stats':
+        handleDashboardStats($method, $conn);
+        break;
+    case 'onboard-tenant':
+        handleOnboardTenant($method, $conn);
+        break;
+    case 'chat-messages':
+        handleChatMessages($method, $conn);
+        break;
+    case 'list-pending-payments':
+        handleListPendingPayments($method, $conn);
+        break;
     case '':
-        echo json_encode(['status' => 'API is running', 'endpoints' => ['hostels', 'bookings', 'users', 'roles', 'permissions', 'login', 'booking-approval', 'pay', 'verify-payment', 'settings', 'support']]);
+        echo json_encode(['status' => 'API is running', 'endpoints' => ['hostels', 'bookings', 'users', 'roles', 'permissions', 'login', 'booking-approval', 'pay', 'verify-payment', 'settings', 'support', 'upload-payment-proof', 'verify-payment-manual', 'dashboard-stats', 'onboard-tenant', 'chat-messages', 'list-pending-payments']]);
         break;
     default:
         http_response_code(404);
@@ -1716,5 +1734,291 @@ function handleRolePermissions($method, $conn) {
             http_response_code(405); echo json_encode(['error' => 'Method not allowed']);
             break;
     }
+}
+
+function handleUploadPaymentProof($method, $conn) {
+    if ($method !== 'POST') {
+        http_response_code(405); echo json_encode(['error' => 'Method not allowed']); return;
+    }
+    // Handle file upload and booking ID
+    $bookingId = isset($_POST['booking_id']) ? (int)$_POST['booking_id'] : 0;
+    $amount = isset($_POST['amount']) ? (float)$_POST['amount'] : 0;
+    $businessId = isset($_POST['business_id']) ? (int)$_POST['business_id'] : 1;
+    $branchId = isset($_POST['branch_id']) ? (int)$_POST['branch_id'] : 1;
+
+    if ($bookingId <= 0 || $amount <= 0 || !isset($_FILES['proof_image'])) {
+        http_response_code(400); echo json_encode(['error' => 'Invalid data or missing image']); return;
+    }
+
+    $file = $_FILES['proof_image'];
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        http_response_code(400); echo json_encode(['error' => 'Upload failed']); return;
+    }
+
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if (!in_array($ext, ['jpg', 'jpeg', 'png', 'pdf'])) {
+        http_response_code(400); echo json_encode(['error' => 'Invalid file type']); return;
+    }
+
+    $filename = uniqid('proof_', true) . '.' . $ext;
+    $relPath = 'assets/images/payments/' . $filename;
+    $targetPath = __DIR__ . '/' . $relPath;
+
+    if (!is_dir(dirname($targetPath))) {
+        mkdir(dirname($targetPath), 0755, true);
+    }
+
+    if (!move_uploaded_file($file['tmp_name'], $targetPath)) {
+        http_response_code(500); echo json_encode(['error' => 'Failed to save file']); return;
+    }
+
+    $stmt = mysqli_prepare($conn, "INSERT INTO payments (business_id, branch_id, booking_id, amount, proof_image_path, status) VALUES (?, ?, ?, ?, ?, 'pending')");
+    mysqli_stmt_bind_param($stmt, 'iiids', $businessId, $branchId, $bookingId, $amount, $relPath);
+    if (mysqli_stmt_execute($stmt)) {
+        echo json_encode(['success' => true]);
+    } else {
+        http_response_code(500); echo json_encode(['error' => 'Database error']);
+    }
+    mysqli_stmt_close($stmt);
+}
+
+function handleVerifyPaymentManual($method, $conn) {
+    if ($method !== 'POST') {
+        http_response_code(405); echo json_encode(['error' => 'Method not allowed']); return;
+    }
+    $data = json_decode(file_get_contents('php://input'), true);
+    $paymentId = isset($data['payment_id']) ? (int)$data['payment_id'] : 0;
+    $action = isset($data['action']) ? $data['action'] : ''; // 'approve' or 'reject'
+    $verifierId = isset($data['verifier_id']) ? (int)$data['verifier_id'] : null;
+
+    if ($paymentId <= 0 || !in_array($action, ['approve', 'reject'])) {
+        http_response_code(400); echo json_encode(['error' => 'Invalid data']); return;
+    }
+
+    $status = $action === 'approve' ? 'confirmed' : 'rejected';
+
+    $stmt = mysqli_prepare($conn, "UPDATE payments SET status = ?, verified_by = ? WHERE id = ?");
+    mysqli_stmt_bind_param($stmt, 'sii', $status, $verifierId, $paymentId);
+    if (mysqli_stmt_execute($stmt)) {
+        // If approved, update booking payment status
+        if ($status === 'confirmed') {
+            $bStmt = mysqli_query($conn, "SELECT booking_id FROM payments WHERE id = $paymentId LIMIT 1");
+            if ($bRow = mysqli_fetch_assoc($bStmt)) {
+                $bId = $bRow['booking_id'];
+                mysqli_query($conn, "UPDATE bookings SET payment_status = 'paid' WHERE id = $bId");
+            }
+        }
+        echo json_encode(['success' => true]);
+    } else {
+        http_response_code(500); echo json_encode(['error' => 'Database error']);
+    }
+    mysqli_stmt_close($stmt);
+}
+
+function handleDashboardStats($method, $conn) {
+    if ($method !== 'GET') {
+        http_response_code(405); echo json_encode(['error' => 'Method not allowed']); return;
+    }
+    
+    $role = isset($_GET['role']) ? $_GET['role'] : 'admin';
+    $userId = isset($_GET['user_id']) ? (int)$_GET['user_id'] : 0;
+    
+    $stats = [];
+    if ($role === 'admin') {
+        $stats['total_users'] = mysqli_fetch_column(mysqli_query($conn, "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND user_type IN ('student', 'hostel_owner')"));
+        $stats['total_properties'] = mysqli_fetch_column(mysqli_query($conn, "SELECT COUNT(*) FROM hostels WHERE deleted_at IS NULL"));
+        $stats['active_tenancies'] = mysqli_fetch_column(mysqli_query($conn, "SELECT COUNT(*) FROM bookings WHERE deleted_at IS NULL AND start_date <= CURDATE() AND end_date >= CURDATE()"));
+        $stats['confirmed_revenue'] = mysqli_fetch_column(mysqli_query($conn, "SELECT COALESCE(SUM(amount), 0) FROM payments WHERE deleted_at IS NULL AND status = 'confirmed'"));
+        $stats['pending_revenue'] = mysqli_fetch_column(mysqli_query($conn, "SELECT COALESCE(SUM(amount), 0) FROM payments WHERE deleted_at IS NULL AND status = 'pending'"));
+    } else if ($role === 'hostel_owner' && $userId > 0) {
+        $stats['total_listings'] = mysqli_fetch_column(mysqli_query($conn, "SELECT COUNT(*) FROM hostels WHERE owner_id = $userId AND deleted_at IS NULL"));
+        $stats['active_tenants'] = mysqli_fetch_column(mysqli_query($conn, "
+            SELECT COUNT(DISTINCT b.user_id) FROM bookings b 
+            JOIN rooms r ON b.room_id = r.id 
+            JOIN hostels h ON r.hostel_id = h.id 
+            WHERE h.owner_id = $userId AND b.deleted_at IS NULL AND b.start_date <= CURDATE() AND b.end_date >= CURDATE()
+        "));
+        $stats['confirmed_revenue'] = mysqli_fetch_column(mysqli_query($conn, "
+            SELECT COALESCE(SUM(p.amount), 0) FROM payments p 
+            JOIN bookings b ON p.booking_id = b.id 
+            JOIN rooms r ON b.room_id = r.id 
+            JOIN hostels h ON r.hostel_id = h.id 
+            WHERE h.owner_id = $userId AND p.deleted_at IS NULL AND p.status = 'confirmed'
+        "));
+        $stats['pending_revenue'] = mysqli_fetch_column(mysqli_query($conn, "
+            SELECT COALESCE(SUM(p.amount), 0) FROM payments p 
+            JOIN bookings b ON p.booking_id = b.id 
+            JOIN rooms r ON b.room_id = r.id 
+            JOIN hostels h ON r.hostel_id = h.id 
+            WHERE h.owner_id = $userId AND p.deleted_at IS NULL AND p.status = 'pending'
+        "));
+    }
+    
+    echo json_encode($stats);
+}
+
+function handleOnboardTenant($method, $conn) {
+    if ($method !== 'POST') {
+        http_response_code(405); echo json_encode(['error' => 'Method not allowed']); return;
+    }
+    $data = json_decode(file_get_contents('php://input'), true);
+    $name = trim($data['name'] ?? '');
+    $email = trim($data['email'] ?? '');
+    $phone = trim($data['phone'] ?? '');
+    $roomId = isset($data['room_id']) ? (int)$data['room_id'] : 0;
+    $startDate = $data['start_date'] ?? '';
+    $endDate = $data['end_date'] ?? '';
+    
+    if ($name === '' || $email === '' || $roomId <= 0 || $startDate === '' || $endDate === '') {
+        http_response_code(400); echo json_encode(['error' => 'Missing required fields']); return;
+    }
+    
+    $userId = 0;
+    $check = mysqli_query($conn, "SELECT id FROM users WHERE email = '" . mysqli_real_escape_string($conn, $email) . "' LIMIT 1");
+    if ($row = mysqli_fetch_assoc($check)) {
+        $userId = $row['id'];
+    } else {
+        $password = password_hash('Student123!', PASSWORD_DEFAULT);
+        $stmt = mysqli_prepare($conn, "INSERT INTO users (business_id, branch_id, name, email, phone, password, user_type) VALUES (1, 1, ?, ?, ?, ?, 'student')");
+        mysqli_stmt_bind_param($stmt, 'ssss', $name, $email, $phone, $password);
+        if (mysqli_stmt_execute($stmt)) {
+            $userId = mysqli_insert_id($conn);
+        } else {
+            http_response_code(500); echo json_encode(['error' => 'Failed to create user']); return;
+        }
+        mysqli_stmt_close($stmt);
+    }
+    
+    $bStmt = mysqli_prepare($conn, "INSERT INTO bookings (business_id, branch_id, user_id, room_id, status, start_date, end_date) VALUES (1, 1, ?, ?, 'approved', ?, ?)");
+    mysqli_stmt_bind_param($bStmt, 'iiss', $userId, $roomId, $startDate, $endDate);
+    if (mysqli_stmt_execute($bStmt)) {
+        mysqli_query($conn, "UPDATE rooms SET status = 'occupied' WHERE id = $roomId");
+        echo json_encode(['success' => true, 'user_id' => $userId, 'booking_id' => mysqli_insert_id($conn)]);
+    } else {
+        http_response_code(500); echo json_encode(['error' => 'Failed to create booking']);
+    }
+    mysqli_stmt_close($bStmt);
+}
+
+function handleChatMessages($method, $conn) {
+    if ($method === 'GET') {
+        $userId = isset($_GET['user_id']) ? (int)$_GET['user_id'] : 0;
+        $role = isset($_GET['role']) ? $_GET['role'] : 'student';
+        if ($userId <= 0) {
+            http_response_code(400); echo json_encode(['error' => 'Invalid user_id']); return;
+        }
+        
+        $query = "";
+        if ($role === 'admin') {
+            $query = "SELECT st.*, u.name as user_name FROM support_tickets st JOIN users u ON st.user_id = u.id ORDER BY st.created_at DESC";
+        } else if ($role === 'hostel_owner') {
+            $query = "SELECT st.*, u.name as user_name FROM support_tickets st JOIN users u ON st.user_id = u.id 
+                      WHERE st.user_id = $userId OR st.user_id IN (
+                          SELECT b.user_id FROM bookings b 
+                          JOIN rooms r ON b.room_id = r.id 
+                          JOIN hostels h ON r.hostel_id = h.id 
+                          WHERE h.owner_id = $userId AND b.status IN ('pending', 'confirmed')
+                      ) ORDER BY st.created_at DESC";
+        } else {
+            $query = "SELECT st.*, u.name as user_name FROM support_tickets st JOIN users u ON st.user_id = u.id WHERE st.user_id = $userId ORDER BY st.created_at DESC";
+        }
+        
+        $res = mysqli_query($conn, $query);
+        $threads = [];
+        while ($row = mysqli_fetch_assoc($res)) {
+            $tId = $row['id'];
+            $rRes = mysqli_query($conn, "SELECT tr.*, u.name as sender_name FROM ticket_replies tr JOIN users u ON tr.user_id = u.id WHERE tr.ticket_id = $tId ORDER BY tr.created_at ASC");
+            $replies = [];
+            while ($rRow = mysqli_fetch_assoc($rRes)) {
+                $replies[] = $rRow;
+            }
+            $row['replies'] = $replies;
+            $threads[] = $row;
+        }
+        echo json_encode($threads);
+    } else if ($method === 'POST') {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $userId = isset($data['user_id']) ? (int)$data['user_id'] : 0;
+        $ticketId = isset($data['ticket_id']) ? (int)$data['ticket_id'] : 0;
+        $message = trim($data['message'] ?? '');
+        
+        if ($userId <= 0 || $message === '') {
+            http_response_code(400); echo json_encode(['error' => 'Invalid data']); return;
+        }
+        
+        // Fetch sender name
+        $nameRes = mysqli_query($conn, "SELECT name FROM users WHERE id = $userId");
+        $senderName = 'Unknown';
+        if ($nRow = mysqli_fetch_assoc($nameRes)) {
+            $senderName = $nRow['name'];
+        }
+        
+        if ($ticketId <= 0) {
+            $stmt = mysqli_prepare($conn, "INSERT INTO support_tickets (business_id, branch_id, user_id, subject, message) VALUES (1, 1, ?, 'Chat', ?)");
+            if (!$stmt) {
+                http_response_code(500); echo json_encode(['error' => 'Database error: ' . mysqli_error($conn)]); return;
+            }
+            mysqli_stmt_bind_param($stmt, 'is', $userId, $message);
+            mysqli_stmt_execute($stmt);
+            $ticketId = mysqli_insert_id($conn);
+            mysqli_stmt_close($stmt);
+            
+            $reply = [
+                'id' => 0, 'ticket_id' => $ticketId, 'user_id' => $userId, 
+                'message' => $message, 'sender_name' => $senderName, 
+                'created_at' => date('Y-m-d H:i:s'), 'is_new_ticket' => true
+            ];
+            echo json_encode(['success' => true, 'ticket_id' => $ticketId, 'reply' => $reply]);
+        } else {
+            $stmt = mysqli_prepare($conn, "INSERT INTO ticket_replies (ticket_id, user_id, message) VALUES (?, ?, ?)");
+            if (!$stmt) {
+                http_response_code(500); echo json_encode(['error' => 'Database error: ' . mysqli_error($conn)]); return;
+            }
+            mysqli_stmt_bind_param($stmt, 'iis', $ticketId, $userId, $message);
+            mysqli_stmt_execute($stmt);
+            $replyId = mysqli_insert_id($conn);
+            mysqli_stmt_close($stmt);
+            
+            $reply = [
+                'id' => $replyId, 'ticket_id' => $ticketId, 'user_id' => $userId, 
+                'message' => $message, 'sender_name' => $senderName, 
+                'created_at' => date('Y-m-d H:i:s')
+            ];
+            echo json_encode(['success' => true, 'ticket_id' => $ticketId, 'reply' => $reply]);
+        }
+    } else {
+        http_response_code(405); echo json_encode(['error' => 'Method not allowed']);
+    }
+}
+
+function handleListPendingPayments($method, $conn) {
+    if ($method !== 'GET') {
+        http_response_code(405); echo json_encode(['error' => 'Method not allowed']); return;
+    }
+    
+    // In a real app, we might filter by owner_id if the user is a manager.
+    // For now, we'll return all pending payments and their related details.
+    $query = "
+        SELECT p.id, p.booking_id, p.amount, p.proof_image_path, p.payment_date, p.status,
+               u.name as student_name, h.name as hostel_name
+        FROM payments p
+        JOIN bookings b ON p.booking_id = b.id
+        JOIN users u ON b.user_id = u.id
+        JOIN rooms r ON b.room_id = r.id
+        JOIN hostels h ON r.hostel_id = h.id
+        WHERE p.status = 'pending' AND p.deleted_at IS NULL AND p.proof_image_path IS NOT NULL
+        ORDER BY p.payment_date DESC
+    ";
+    
+    $res = mysqli_query($conn, $query);
+    $payments = [];
+    while ($row = mysqli_fetch_assoc($res)) {
+        // ensure proof_image_path is a full URL or absolute path relative to root
+        // If it's saved as 'assets/images/payments/...', we want it to be accessible
+        $row['amount'] = (float)$row['amount'];
+        $payments[] = $row;
+    }
+    
+    echo json_encode($payments);
 }
 ?>
