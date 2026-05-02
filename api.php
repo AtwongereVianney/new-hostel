@@ -1142,8 +1142,16 @@ function handleHostels($method, $conn) {
                 }
 
                 // Handle existing image paths if provided
-                if (isset($data['images']) && is_array($data['images'])) {
+                if (isset($data['images']) && is_array($data['images']) && count($data['images']) > 0) {
+                    // Soft-delete old image rows first to prevent duplicate accumulation
+                    $delOld = mysqli_prepare($conn, "UPDATE hostel_images SET deleted_at = NOW() WHERE hostel_id = ? AND deleted_at IS NULL");
+                    mysqli_stmt_bind_param($delOld, 'i', $hostelId);
+                    mysqli_stmt_execute($delOld);
+                    mysqli_stmt_close($delOld);
+
                     foreach ($data['images'] as $imagePath) {
+                        $imagePath = trim((string)$imagePath);
+                        if ($imagePath === '') continue;
                         $imgStmt = mysqli_prepare($conn, "INSERT INTO hostel_images (hostel_id, image_path) VALUES (?, ?)");
                         mysqli_stmt_bind_param($imgStmt, 'is', $hostelId, $imagePath);
                         mysqli_stmt_execute($imgStmt);
